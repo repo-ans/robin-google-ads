@@ -1,0 +1,163 @@
+@import "tailwindcss";
+
+/* Dark mode follows the .dark class on <html>, set by lib/theme.ts. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Semantic colour tokens. Components use these (bg-page, bg-surface, text-ink,
+ * border-line, ...) instead of raw slate shades, so one set of classes works in
+ * light, dark and print. Light values match the reference app's slate palette.
+ */
+@theme {
+  --color-page: #f8fafc;          /* slate-50 */
+  --color-surface: #ffffff;
+  --color-surface-muted: #f1f5f9; /* slate-100 */
+  --color-line: #e2e8f0;          /* slate-200 */
+  --color-line-strong: #cbd5e1;   /* slate-300 */
+  --color-ink: #0f172a;           /* slate-900 */
+  --color-ink-muted: #475569;     /* slate-600 */
+  --color-ink-subtle: #64748b;    /* slate-500 */
+  --color-accent: #0f172a;        /* primary button background */
+  --color-accent-hover: #334155;  /* slate-700 */
+  --color-accent-ink: #ffffff;    /* text on accent */
+  --color-danger: #dc2626;
+  --color-danger-soft: #fef2f2;
+  --color-danger-line: #fca5a5;
+  --color-success: #059669;
+  --color-warning: #b45309;
+  --color-warning-soft: #fffbeb;
+  --color-warning-line: #fcd34d;
+  --color-info: #1d4ed8;
+  --color-info-soft: #eff6ff;
+  /* Chart series */
+  --color-chart-1: #0f172a;
+  --color-chart-2: #059669;
+  --color-chart-3: #2563eb;
+  --color-chart-4: #d97706;
+  --color-heat: #0f766e;
+}
+
+@layer base {
+  .dark {
+    --color-page: #020617;          /* slate-950 */
+    --color-surface: #0f172a;       /* slate-900 */
+    --color-surface-muted: #1e293b; /* slate-800 */
+    --color-line: #1e293b;
+    --color-line-strong: #334155;
+    --color-ink: #f1f5f9;
+    --color-ink-muted: #cbd5e1;
+    --color-ink-subtle: #94a3b8;
+    --color-accent: #f1f5f9;
+    --color-accent-hover: #cbd5e1;
+    --color-accent-ink: #0f172a;
+    --color-danger: #f87171;
+    --color-danger-soft: #2a1215;
+    --color-danger-line: #7f1d1d;
+    --color-success: #34d399;
+    --color-warning: #fbbf24;
+    --color-warning-soft: #271b05;
+    --color-warning-line: #78350f;
+    --color-info: #93c5fd;
+    --color-info-soft: #0b1a33;
+    --color-chart-1: #e2e8f0;
+    --color-chart-2: #34d399;
+    --color-chart-3: #60a5fa;
+    --color-chart-4: #fbbf24;
+    --color-heat: #2dd4bf;
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-page);
+    color: var(--color-ink);
+  }
+}
+
+@keyframes loading-bar-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(20%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.loading-bar {
+  animation: loading-bar-slide 1.2s ease-in-out infinite;
+}
+
+/*
+ * Print: always light, no buttons or navigation, no broken cards.
+ * Mark anything screen-only with the `no-print` class.
+ */
+@media print {
+  :root,
+  .dark {
+    --color-page: #ffffff;
+    --color-surface: #ffffff;
+    --color-surface-muted: #f1f5f9;
+    --color-line: #cbd5e1;
+    --color-line-strong: #94a3b8;
+    --color-ink: #000000;
+    --color-ink-muted: #334155;
+    --color-ink-subtle: #475569;
+    color-scheme: light;
+  }
+
+  @page {
+    margin: 12mm;
+  }
+
+  body {
+    font-size: 11pt;
+  }
+
+  .no-print,
+  button,
+  nav {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  table,
+  .card {
+    break-inside: avoid;
+  }
+
+  tr,
+  td,
+  th {
+    break-inside: avoid;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  /* Tables that scroll sideways on screen show in full on paper. */
+  .overflow-x-auto {
+    overflow: visible !important;
+  }
+}
+
+.print-only {
+  display: none;
+}

@@ -1,0 +1,877 @@
+{
+  "name": "ff-dataforseo",
+  "nodes": [
+    {
+      "id": "3ce0383f-e28a-4159-86e7-7ef0a1a83886",
+      "name": "Schedule: weekly Monday 05:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "5a20fa15-6532-45bb-b604-24dc31a4c04a",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        400
+      ],
+      "webhookId": "ff-keyword-research",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ff/keyword-research",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "http://localhost:5173"
+        }
+      },
+      "notes": "Refresh keyword data from the dashboard. Answers 202 at once; the research carries on."
+    },
+    {
+      "id": "7ca199df-0d64-4470-a376-8e56917c2b5b",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Non-secret settings for ff-dataforseo. Secrets are n8n credentials:\n//   FF Supabase (service role), FF Google OAuth refresh,\n//   FF Google Ads developer token, FF DataForSEO (Basic Auth: API login + password).\n// Weekly (Monday 05:00) and from the dashboard (\"Refresh keyword data\").\n// Webhook body (optional): { client_id } to research one client only.\nconst SETTINGS = {\n  SUPABASE_URL: 'https://SET-ME.supabase.co',\n  SUPABASE_ANON_KEY: 'SET-ME',\n  GOOGLE_ADS_API_VERSION: 'v25',\n  ALLOWED_ROLES: ['rob_admin', 'ff_staff'],\n  RELATED_SEEDS_PER_CLIENT: 5, // DataForSEO related-keywords calls per client per run\n  RELATED_PER_SEED: 20,\n};\n\nconst src = $input.first().json || {};\nconst fromWebhook = Boolean(src.headers);\nconst body = fromWebhook && src.body && typeof src.body === 'object' ? src.body : {};\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\nreturn [{\n  json: {\n    ...SETTINGS,\n    body,\n    trigger: fromWebhook ? 'manual' : 'schedule',\n    only_client_id: typeof body.client_id === 'string' && uuid.test(body.client_id) ? body.client_id : null,\n  },\n}];\n"
+      },
+      "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
+    },
+    {
+      "id": "fa2a0115-c27c-44cb-abaf-91726f889d75",
+      "name": "Manual run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "bb0947e0-8b41-4d6e-9c35-8b13955592c8",
+              "leftValue": "={{ $('Config').first().json.trigger === 'manual' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "fc7302cb-468a-4b8d-8a2a-13fad1863f97",
+      "parameters": {
+        "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
+      },
+      "name": "Auth: read token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        400
+      ],
+      "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
+    },
+    {
+      "id": "2445587e-9302-4fe2-a482-94733bbe3a13",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Config').first().json.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token || 'missing' }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: verify token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        400
+      ],
+      "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
+    },
+    {
+      "id": "163649db-7d3e-421e-bc2f-eae921186106",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "=eq.{{ (($json.statusCode === 200 && $json.body && /^[0-9a-f-]{36}$/.test($json.body.id)) ? $json.body.id : '00000000-0000-0000-0000-000000000000') }}"
+            },
+            {
+              "name": "select",
+              "value": "user_id,email,role,client_id,disabled"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: load profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        400
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
+    },
+    {
+      "id": "e5a464fa-f604-4add-beb2-41bc5b76d129",
+      "parameters": {
+        "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
+      },
+      "name": "Auth: check role",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        400
+      ],
+      "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
+    },
+    {
+      "id": "900e0ad2-6e7e-49c5-918a-6c61d1e9474e",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "a1b2c3d4-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Auth: allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        400
+      ]
+    },
+    {
+      "id": "029292ae-ece2-4063-93d5-4e0b1d3f6974",
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "name": "Respond: denied",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        600
+      ],
+      "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
+    },
+    {
+      "id": "4ca1e5b7-3a0e-4177-947b-ce2615a0a18b",
+      "name": "Respond: accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'started' }) }}",
+        "options": {
+          "responseCode": 202
+        }
+      }
+    },
+    {
+      "id": "21781232-047c-4357-89c5-3702197ea60a",
+      "name": "Get research targets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/rpc/ff_keyword_research_targets",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_client_id: $('Config').first().json.only_client_id }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "be027aa8-c66c-469b-8fc3-a888cfce87ef",
+      "name": "Prepare targets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// One item per client with keywords to research (ff_keyword_research_targets:\n// our positive keywords, negatives and non-name search terms, most spend first).\n// { none: true } when there is nothing, so the loop is skipped cleanly.\nconst rows = $input.all().map((i) => i.json).filter((r) => r && r.client_id && Array.isArray(r.keywords) && r.keywords.length);\nif (!rows.length) return [{ json: { none: true } }];\nreturn rows.map((r) => ({\n  json: {\n    client_id: r.client_id,\n    customer_id: r.customer_id,\n    login_customer_id: r.login_customer_id || null,\n    location_code: Number(r.location_code) || 2840,\n    language_code: r.language_code || 'en',\n    keywords: r.keywords.slice(0, 1000),\n    seeds: (r.seeds || []).filter(Boolean),\n    geo_targets: (r.geo_targets || []).filter(Boolean).slice(0, 10),\n  },\n}));\n"
+      }
+    },
+    {
+      "id": "bd947b46-70a2-4181-81c2-2b18ef8cbf6c",
+      "name": "Anything to research?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "bc843419-5200-493f-8578-292998fbd9d0",
+              "leftValue": "={{ !$json.none }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "6b96d417-4edb-4c94-9569-4bcecbb8becd",
+      "name": "Loop over clients",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2640,
+        200
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "48210879-b190-4410-a99c-e44d23a86068",
+      "name": "Refresh Google token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        600
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "",
+          "name": "FF Google OAuth refresh"
+        }
+      },
+      "notes": "OAuth refresh. client_id, client_secret and refresh_token come from the Custom Auth credential 'FF Google OAuth refresh' - never from code or Supabase."
+    },
+    {
+      "id": "c63aa99f-1096-4540-8359-4b9b3bcccd6d",
+      "name": "Build requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        600
+      ],
+      "parameters": {
+        "jsCode": "// Request bodies for the current client:\n//   DataForSEO  keywords_data/google_ads/search_volume/live (up to 1000 keywords)\n//   Google Ads  KeywordPlanIdeaService.GenerateKeywordHistoricalMetrics (read only)\nconst t = $('Loop over clients').first().json;\nconst LANGUAGES = { en: 'languageConstants/1000', fr: 'languageConstants/1002', es: 'languageConstants/1003' };\n\nconst googleBody = {\n  keywords: t.keywords,\n  keywordPlanNetwork: 'GOOGLE_SEARCH',\n  language: LANGUAGES[t.language_code] || LANGUAGES.en,\n  historicalMetricsOptions: { includeAverageCpc: true },\n};\nif (t.geo_targets.length) googleBody.geoTargetConstants = t.geo_targets;\n\nreturn [{\n  json: {\n    ...t,\n    dataforseo_body: [{ keywords: t.keywords, location_code: t.location_code, language_code: t.language_code }],\n    google_body: googleBody,\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "23a50640-18e4-4981-b540-4c7531c4d236",
+      "name": "DataForSEO search volume",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        600
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.dataforseo.com/v3/keywords_data/google_ads/search_volume/live",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.dataforseo_body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "",
+          "name": "FF DataForSEO"
+        }
+      },
+      "notes": "Volume, CPC and competition for up to 1000 of our keywords, negatives and search terms."
+    },
+    {
+      "id": "699120df-435c-443c-89bd-7e621684124c",
+      "name": "Google keyword metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        600
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://googleads.googleapis.com/{{ $('Config').first().json.GOOGLE_ADS_API_VERSION }}/customers/{{ $('Build requests').first().json.customer_id }}:generateKeywordHistoricalMetrics",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify(Object.assign({ \"Authorization\": \"Bearer \" + ($('Refresh Google token').first().json.access_token || 'missing'), \"Content-Type\": \"application/json\" }, $('Build requests').first().json.login_customer_id ? { \"login-customer-id\": $('Build requests').first().json.login_customer_id } : {})) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Build requests').first().json.google_body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "",
+          "name": "FF Google Ads developer token"
+        }
+      },
+      "notes": "Google Keyword Planner historical metrics. Read only (not a mutate)."
+    },
+    {
+      "id": "d3adefcc-76c4-4ed4-a88a-f321ff6e09aa",
+      "name": "Related seeds",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        600
+      ],
+      "parameters": {
+        "jsCode": "// One item per seed keyword for DataForSEO related keywords. Always at least one\n// item ({ skip: true }) so the loop keeps going when a client has no seeds.\nconst cfg = $('Config').first().json;\nconst t = $('Build requests').first().json;\nconst seeds = t.seeds.slice(0, cfg.RELATED_SEEDS_PER_CLIENT);\nif (!seeds.length) return [{ json: { skip: true, seed: null, body: [] } }];\nreturn seeds.map((seed) => ({\n  json: {\n    skip: false,\n    seed,\n    body: [{ keyword: seed, location_code: t.location_code, language_code: t.language_code, limit: cfg.RELATED_PER_SEED }],\n  },\n}));\n"
+      }
+    },
+    {
+      "id": "764e5b64-768e-4832-8794-0bdac2baf1c0",
+      "name": "DataForSEO related keywords",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3740,
+        600
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.dataforseo.com/v3/dataforseo_labs/google/related_keywords/live",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 500
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "",
+          "name": "FF DataForSEO"
+        }
+      }
+    },
+    {
+      "id": "da1aa5dd-6b87-4c8f-be48-4e99f14afc51",
+      "name": "Map results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        600
+      ],
+      "parameters": {
+        "jsCode": "// DataForSEO + Google Keyword Planner responses -> keyword_volume rows\n// (source 'dataforseo' / 'google_kp'), cached per month. Related keywords are\n// stored on the seed's DataForSEO row. Rows in one request share the same keys.\nconst t = $('Build requests').first().json;\nconst dfs = $('DataForSEO search volume').first().json || {};\nconst kp = $('Google keyword metrics').first().json || {};\nconst relatedInputs = $input.all();\n\nconst now = new Date();\nconst month = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`;\nconst syncedAt = now.toISOString();\nconst norm = (s) => String(s || '').toLowerCase().trim().replace(/\\s+/g, ' ');\nconst intOrNull = (v) => (v === null || v === undefined || v === '' ? null : Math.round(Number(v)));\nconst microsFromMoney = (v) => (v === null || v === undefined || v === '' ? null : Math.round(Number(v) * 1e6));\nconst ok = (r) => r && r.statusCode >= 200 && r.statusCode < 300;\n\nconst rows = new Map();\nfunction put(row) {\n  const key = [row.source, row.keyword_norm, row.geo_target, row.language, row.fetched_month].join('|');\n  const prev = rows.get(key);\n  rows.set(key, prev ? { ...prev, ...row, related_keywords: row.related_keywords.length ? row.related_keywords : prev.related_keywords } : row);\n}\nconst base = (source, keyword, geo) => ({\n  source, keyword_norm: norm(keyword), geo_target: geo, language: t.language_code, fetched_month: month,\n  avg_monthly_searches: null, competition: null, competition_index: null, low_top_bid_micros: null,\n  high_top_bid_micros: null, avg_cpc_micros: null, monthly_searches: [], related_keywords: [], synced_at: syncedAt,\n});\n\nconst errors = [];\n\n// DataForSEO search volume\nconst dfsTask = ok(dfs) && dfs.body && dfs.body.tasks && dfs.body.tasks[0];\nif (dfsTask && dfsTask.status_code === 20000) {\n  for (const r of dfsTask.result || []) {\n    if (!r || !r.keyword) continue;\n    put({\n      ...base('dataforseo', r.keyword, String(t.location_code)),\n      avg_monthly_searches: intOrNull(r.search_volume),\n      competition: r.competition || null,\n      competition_index: intOrNull(r.competition_index),\n      low_top_bid_micros: microsFromMoney(r.low_top_of_page_bid),\n      high_top_bid_micros: microsFromMoney(r.high_top_of_page_bid),\n      avg_cpc_micros: microsFromMoney(r.cpc),\n      monthly_searches: (r.monthly_searches || []).map((x) => ({ year: x.year, month: x.month, searches: x.search_volume })),\n    });\n  }\n} else {\n  errors.push(`DataForSEO search volume: ${(dfsTask && dfsTask.status_message) || (dfs.body && dfs.body.status_message) || `status ${dfs.statusCode}`}`);\n}\n\n// Google Keyword Planner historical metrics\nif (ok(kp)) {\n  for (const r of (kp.body && kp.body.results) || []) {\n    const km = r.keywordMetrics || {};\n    if (!r.text) continue;\n    put({\n      ...base('google_kp', r.text, ''),\n      avg_monthly_searches: intOrNull(km.avgMonthlySearches),\n      competition: km.competition || null,\n      competition_index: intOrNull(km.competitionIndex),\n      low_top_bid_micros: intOrNull(km.lowTopOfPageBidMicros),\n      high_top_bid_micros: intOrNull(km.highTopOfPageBidMicros),\n      avg_cpc_micros: intOrNull(km.averageCpcMicros),\n      monthly_searches: (km.monthlySearchVolumes || []).map((x) => ({ year: x.year, month: x.month, searches: intOrNull(x.monthlySearches) })),\n    });\n  }\n} else {\n  errors.push(`Google Keyword Planner: status ${kp.statusCode}`);\n}\n\n// Related keywords (one response per seed)\nrelatedInputs.forEach((item, i) => {\n  let seedItem;\n  try {\n    seedItem = $('Related seeds').itemMatching(i).json;\n  } catch (e) {\n    seedItem = ($('Related seeds').all()[i] || {}).json || {};\n  }\n  if (!seedItem || seedItem.skip) return;\n  const r = item.json || {};\n  const task = ok(r) && r.body && r.body.tasks && r.body.tasks[0];\n  const result = task && task.result && task.result[0];\n  if (!result) {\n    errors.push(`Related keywords for one seed: ${(task && task.status_message) || `status ${r.statusCode}`}`);\n    return;\n  }\n  const related = (result.items || []).slice(0, 50).map((x) => {\n    const kd = x.keyword_data || {};\n    const info = kd.keyword_info || {};\n    return { keyword: kd.keyword, volume: intOrNull(info.search_volume), cpc: info.cpc ?? null, competition: info.competition_level || null };\n  }).filter((x) => x.keyword);\n  const key = ['dataforseo', norm(seedItem.seed), String(t.location_code), t.language_code, month].join('|');\n  const existing = rows.get(key) || base('dataforseo', seedItem.seed, String(t.location_code));\n  rows.set(key, { ...existing, related_keywords: related });\n});\n\nconst all = [...rows.values()];\nconst out = [];\nfor (let i = 0; i < all.length; i += 500) out.push({ json: { rows: all.slice(i, i + 500), errors } });\nif (!out.length) out.push({ json: { rows: [], errors } });\nreturn out;\n"
+      }
+    },
+    {
+      "id": "da665082-ca00-46a3-af9e-db1cd76197e6",
+      "name": "Upsert keyword data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4180,
+        600
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/keyword_volume?on_conflict=source,keyword_norm,geo_target,language,fetched_month",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.rows) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      }
+    },
+    {
+      "id": "1d469b23-730f-4cdd-b2e8-36add6b28a83",
+      "name": "Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2860,
+        200
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Schedule: weekly Monday 05:00": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Manual run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual run?": {
+      "main": [
+        [
+          {
+            "node": "Auth: read token",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get research targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: read token": {
+      "main": [
+        [
+          {
+            "node": "Auth: verify token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: verify token": {
+      "main": [
+        [
+          {
+            "node": "Auth: load profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: load profile": {
+      "main": [
+        [
+          {
+            "node": "Auth: check role",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: check role": {
+      "main": [
+        [
+          {
+            "node": "Auth: allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: allowed?": {
+      "main": [
+        [
+          {
+            "node": "Respond: accepted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: denied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond: accepted": {
+      "main": [
+        [
+          {
+            "node": "Get research targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get research targets": {
+      "main": [
+        [
+          {
+            "node": "Prepare targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare targets": {
+      "main": [
+        [
+          {
+            "node": "Anything to research?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything to research?": {
+      "main": [
+        [
+          {
+            "node": "Loop over clients",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop over clients": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Refresh Google token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refresh Google token": {
+      "main": [
+        [
+          {
+            "node": "Build requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build requests": {
+      "main": [
+        [
+          {
+            "node": "DataForSEO search volume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DataForSEO search volume": {
+      "main": [
+        [
+          {
+            "node": "Google keyword metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google keyword metrics": {
+      "main": [
+        [
+          {
+            "node": "Related seeds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Related seeds": {
+      "main": [
+        [
+          {
+            "node": "DataForSEO related keywords",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DataForSEO related keywords": {
+      "main": [
+        [
+          {
+            "node": "Map results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map results": {
+      "main": [
+        [
+          {
+            "node": "Upsert keyword data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert keyword data": {
+      "main": [
+        [
+          {
+            "node": "Loop over clients",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

@@ -1,0 +1,23 @@
+# Secrets
+.env
+.env.*
+!.env.example
+web/.env
+web/.env.*
+!web/.env.example
+
+# Reference material (other client's code and data) - never commit to the FF repo
+ANS-Google-Ads/
+reference/
+*.pdf
+
+# Case lists are processed and deleted, never stored (hard rule 4)
+case-lists/
+
+# Build and tooling
+node_modules/
+dist/
+.netlify/
+supabase/.temp/
+supabase/.branches/
+.DS_Store

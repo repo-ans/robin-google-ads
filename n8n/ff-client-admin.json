@@ -1,0 +1,864 @@
+{
+  "name": "ff-client-admin",
+  "nodes": [
+    {
+      "id": "82df9e15-356f-40e4-801b-a4482006c09e",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "ff-client-admin",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ff/client-admin",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "http://localhost:5173"
+        }
+      },
+      "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
+    },
+    {
+      "id": "427b355c-b677-4b7d-9c49-8ff9d75f6ee0",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ff-client-admin: clients, account assignment and logins (Supabase Auth Admin API). FF staff manage client logins; only Rob manages staff logins and the Google Ads write switch.\n// Non-secret settings. Secrets are n8n credentials (see the workflow notes);\n// the Supabase service role key is only in \"FF Supabase (service role)\".\nconst SETTINGS = {\n  \"SUPABASE_URL\": \"https://SET-ME.supabase.co\",\n  \"SUPABASE_ANON_KEY\": \"SET-ME\",\n  \"ALLOWED_ROLES\": [\n    \"rob_admin\",\n    \"ff_staff\"\n  ]\n};\n\nconst src = $input.first().json || {};\nreturn [{ json: { ...SETTINGS, body: src.body && typeof src.body === 'object' ? src.body : {} } }];\n"
+      },
+      "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
+    },
+    {
+      "id": "b8b61144-672e-4574-b9d2-3e56452d60db",
+      "parameters": {
+        "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
+      },
+      "name": "Auth: read token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
+    },
+    {
+      "id": "3d64f1a0-c139-4d91-a44c-e405ad2d1c4d",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Config').first().json.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token || 'missing' }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: verify token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        300
+      ],
+      "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
+    },
+    {
+      "id": "dbe31855-3c6e-4d01-89c5-6fcc291869d7",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "=eq.{{ (($json.statusCode === 200 && $json.body && /^[0-9a-f-]{36}$/.test($json.body.id)) ? $json.body.id : '00000000-0000-0000-0000-000000000000') }}"
+            },
+            {
+              "name": "select",
+              "value": "user_id,email,role,client_id,disabled"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: load profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
+    },
+    {
+      "id": "150b110d-6923-453c-b35d-c61c2420b1d1",
+      "parameters": {
+        "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
+      },
+      "name": "Auth: check role",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ],
+      "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
+    },
+    {
+      "id": "0f6617ef-35f5-4bbf-a217-8558691bf449",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "a1b2c3d4-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Auth: allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ]
+    },
+    {
+      "id": "94a987e3-1b9a-4387-860b-35e82576c453",
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "name": "Respond: denied",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        500
+      ],
+      "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
+    },
+    {
+      "id": "dec5b419-0b20-4841-8130-8ec144ef47dd",
+      "name": "Load target login",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles?user_id=eq.{{ /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String($('Config').first().json.body.user_id || '')) ? $('Config').first().json.body.user_id : '00000000-0000-0000-0000-000000000000' }}&select=user_id,email,role,client_id,disabled",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "7b72d4f8-13af-45a5-8cb0-7498d5bb846b",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/input.js (included by scripts/build-n8n.mjs) -------------------\n// Webhook input helpers. The caller always comes from the Auth check block,\n// never from the request body.\nconst UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst CUSTOMER_RE = /^[0-9]{10}$/;\nconst ZERO_UUID = '00000000-0000-0000-0000-000000000000';\n\nconst requestBody = () => {\n  const b = $('Config').first().json.body;\n  return b && typeof b === 'object' ? b : {};\n};\nconst caller = () => $('Auth: check role').first().json.user;\nconst isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);\nconst customerId = (v) => {\n  const d = String(v === undefined || v === null ? '' : v).replace(/-/g, '');\n  return CUSTOMER_RE.test(d) ? d : null;\n};\nconst text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');\n\n// Every \"result\" item carries { status, body } for the generic Respond node.\nconst reject = (status, error) => [{ json: { valid: false, status, body: { error } } }];\nconst reply = (status, body) => [{ json: { status, body } }];\n// ---- end shared/input.js ----------------------------------------------------\n\n// Everything FF staff do to clients, accounts and logins. Body { action, ... }:\n//   create_client      { name, slug?, website_url?, phone?, towns?, process?, currency_code?, case_value?,\n//                        competitor_terms?, own_brand_terms?, slack_channel?, ghl_location_id?,\n//                        dataforseo_location_code?, language_code?, office_hours? }\n//   update_client      { client_id, ...same fields }\n//   archive_client / unarchive_client { client_id }\n//   set_writes_enabled { client_id, enabled }                      rob_admin only\n//   assign_account     { customer_id, client_id | null }            null = back to Unassigned\n//   add_account        { customer_id, login_customer_id?, client_id? }   direct-access accounts\n//   set_account_sync   { customer_id, sync_enabled }\n//   create_login       { client_id, email, password }              a client_viewer login\n//   create_staff_login { email, password, role: ff_staff | rob_admin }   rob_admin only\n//   reset_password     { user_id, password }\n//   disable_login / enable_login { user_id }\n// FF staff manage client logins; only rob_admin manages FF staff logins.\n// Input: the profiles row of body.user_id (empty when not given).\nconst b = requestBody();\nconst user = caller();\nconst target = $input.first().json || {};\nconst isRob = user.role === 'rob_admin';\n\nconst EMAIL_RE = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/;\nconst passwordOk = (p) => typeof p === 'string' && p.length >= 10 && p.length <= 72 && /[A-Za-z]/.test(p) && /[0-9]/.test(p);\nconst list = (v, max = 50) => (Array.isArray(v) ? v.map((x) => text(String(x), 100)).filter(Boolean).slice(0, max) : []);\nconst slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);\nconst DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];\n\n// Only these client fields can be set, each checked.\nfunction clientFields(src) {\n  const f = {};\n  const errors = [];\n  if ('name' in src) { f.name = text(src.name, 120); if (f.name.length < 2) errors.push('Name is required.'); }\n  if ('website_url' in src) {\n    const u = text(src.website_url, 300);\n    if (u && !/^https?:\\/\\/\\S+\\.\\S+$/.test(u)) errors.push('Website must start with https://');\n    f.website_url = u || null;\n  }\n  if ('phone' in src) f.phone = text(src.phone, 40) || null;\n  if ('towns' in src) f.towns = list(src.towns);\n  if ('service_area_notes' in src) f.service_area_notes = text(src.service_area_notes, 1000) || null;\n  if ('process' in src) {\n    if (!['funeral_home', 'online_cremation'].includes(src.process)) errors.push('Process must be funeral_home or online_cremation.');\n    else f.process = src.process;\n  }\n  if ('currency_code' in src) {\n    const c = String(src.currency_code || '').toUpperCase();\n    if (c && !/^[A-Z]{3}$/.test(c)) errors.push('Currency must be a 3-letter code like USD.');\n    f.currency_code = c || null;\n  }\n  if ('case_value' in src) {\n    const n = Number(src.case_value);\n    if (src.case_value !== null && src.case_value !== '' && !(n >= 0)) errors.push('Case value must be a number.');\n    f.case_value_micros = src.case_value === null || src.case_value === '' ? null : Math.round(n * 1e6);\n  }\n  if ('ghl_location_id' in src) f.ghl_location_id = text(src.ghl_location_id, 100) || null;\n  if ('competitor_terms' in src) f.competitor_terms = list(src.competitor_terms);\n  if ('own_brand_terms' in src) f.own_brand_terms = list(src.own_brand_terms);\n  if ('slack_channel' in src) f.slack_channel = text(src.slack_channel, 80) || null;\n  if ('dataforseo_location_code' in src) {\n    const n = Number(src.dataforseo_location_code);\n    if (!Number.isInteger(n) || n <= 0) errors.push('DataForSEO location code must be a number, e.g. 2840 for the US.');\n    else f.dataforseo_location_code = n;\n  }\n  if ('language_code' in src) {\n    if (!['en', 'fr', 'es'].includes(src.language_code)) errors.push('Language must be en, fr or es.');\n    else f.language_code = src.language_code;\n  }\n  if ('office_hours' in src) {\n    const o = src.office_hours || {};\n    const days = (Array.isArray(o.days) ? o.days : []).filter((d) => DAYS.includes(d));\n    const sh = Number(o.start_hour);\n    const eh = Number(o.end_hour);\n    if (!days.length || !(sh >= 0 && sh < 24) || !(eh > sh && eh <= 24)) errors.push('Office hours need days and a start hour before the end hour.');\n    else f.office_hours = { days, start_hour: sh, end_hour: eh };\n  }\n  return { f, errors };\n}\n\nconst req = (method, path, body, prefer = 'return=representation') => ({ method, path, body, prefer });\nconst run = (requests, message) => requests.map((r) => ({ json: { valid: true, kind: 'requests', message, ...r } }));\n\nfunction targetCheck(action) {\n  if (!isUuid(b.user_id)) return 'user_id is missing or not valid.';\n  if (!target.user_id) return 'Login not found.';\n  if (target.role !== 'client_viewer' && !isRob) return 'Only Rob can change FF staff logins.';\n  if (action === 'disable_login' && target.user_id === user.user_id) return 'You cannot turn off your own login.';\n  return null;\n}\n\nswitch (b.action) {\n  case 'create_client': {\n    const { f, errors } = clientFields(b);\n    if (!f.name) errors.push('Name is required.');\n    const slug = slugify(b.slug || b.name || '');\n    if (slug.length < 2) errors.push('Slug is required.');\n    if (errors.length) return reject(400, errors.join(' '));\n    return run([req('POST', 'rest/v1/clients', { ...f, slug })], 'Client created.');\n  }\n  case 'update_client': {\n    if (!isUuid(b.client_id)) return reject(400, 'client_id is missing or not valid.');\n    const { f, errors } = clientFields(b);\n    if (errors.length) return reject(400, errors.join(' '));\n    if (!Object.keys(f).length) return reject(400, 'Nothing to change.');\n    return run([req('PATCH', `rest/v1/clients?id=eq.${b.client_id}`, f)], 'Client updated.');\n  }\n  case 'archive_client':\n  case 'unarchive_client': {\n    if (!isUuid(b.client_id)) return reject(400, 'client_id is missing or not valid.');\n    const archived = b.action === 'archive_client' ? new Date().toISOString() : null;\n    return run([req('PATCH', `rest/v1/clients?id=eq.${b.client_id}`, { archived_at: archived })],\n      archived ? 'Client archived.' : 'Client restored.');\n  }\n  case 'set_writes_enabled': {\n    if (!isRob) return reject(403, 'Only Rob can turn Google Ads writes on or off.');\n    if (!isUuid(b.client_id)) return reject(400, 'client_id is missing or not valid.');\n    return run([req('PATCH', `rest/v1/clients?id=eq.${b.client_id}`, { writes_enabled: b.enabled === true })],\n      b.enabled === true ? 'Writes turned on for this client.' : 'Writes turned off for this client.');\n  }\n  case 'assign_account': {\n    const cid = customerId(b.customer_id);\n    if (!cid) return reject(400, 'customer_id must be 10 digits.');\n    if (b.client_id !== null && !isUuid(b.client_id)) return reject(400, 'client_id is not valid.');\n    return run([req('PATCH', `rest/v1/ad_accounts?customer_id=eq.${cid}`, { client_id: b.client_id })],\n      b.client_id ? 'Account assigned.' : 'Account moved to Unassigned.');\n  }\n  case 'add_account': {\n    const cid = customerId(b.customer_id);\n    if (!cid) return reject(400, 'customer_id must be 10 digits.');\n    const login = b.login_customer_id ? customerId(b.login_customer_id) : null;\n    if (b.login_customer_id && !login) return reject(400, 'login_customer_id must be 10 digits, or empty for direct access.');\n    if (b.client_id && !isUuid(b.client_id)) return reject(400, 'client_id is not valid.');\n    return run([req('POST', 'rest/v1/ad_accounts?on_conflict=customer_id',\n      [{ customer_id: cid, login_customer_id: login, client_id: b.client_id || null }],\n      'resolution=merge-duplicates,return=representation')], 'Account added. It will sync on the next run.');\n  }\n  case 'set_account_sync': {\n    const cid = customerId(b.customer_id);\n    if (!cid) return reject(400, 'customer_id must be 10 digits.');\n    return run([req('PATCH', `rest/v1/ad_accounts?customer_id=eq.${cid}`, { sync_enabled: b.sync_enabled === true })],\n      b.sync_enabled === true ? 'Sync turned on.' : 'Sync turned off.');\n  }\n  case 'create_login':\n  case 'create_staff_login': {\n    const email = text(b.email, 200).toLowerCase();\n    if (!EMAIL_RE.test(email)) return reject(400, 'Enter a valid email address.');\n    if (!passwordOk(b.password)) return reject(400, 'Password: at least 10 characters, with letters and numbers.');\n    let role = 'client_viewer';\n    let clientId = null;\n    if (b.action === 'create_staff_login') {\n      if (!isRob) return reject(403, 'Only Rob can create FF staff logins.');\n      if (!['ff_staff', 'rob_admin'].includes(b.role)) return reject(400, 'Role must be ff_staff or rob_admin.');\n      role = b.role;\n    } else {\n      if (!isUuid(b.client_id)) return reject(400, 'client_id is missing or not valid.');\n      clientId = b.client_id;\n    }\n    return [{ json: { valid: true, kind: 'create_login', email, password: b.password, role, client_id: clientId } }];\n  }\n  case 'reset_password': {\n    const problem = targetCheck(b.action);\n    if (problem) return reject(problem === 'Login not found.' ? 404 : 403, problem);\n    if (!passwordOk(b.password)) return reject(400, 'Password: at least 10 characters, with letters and numbers.');\n    return run([req('PUT', `auth/v1/admin/users/${target.user_id}`, { password: b.password })], 'Password changed.');\n  }\n  case 'disable_login':\n  case 'enable_login': {\n    const problem = targetCheck(b.action);\n    if (problem) return reject(problem === 'Login not found.' ? 404 : 403, problem);\n    const off = b.action === 'disable_login';\n    return run([\n      req('PUT', `auth/v1/admin/users/${target.user_id}`, { ban_duration: off ? '876000h' : 'none' }),\n      req('PATCH', `rest/v1/profiles?user_id=eq.${target.user_id}`, { disabled: off }),\n    ], off ? 'Login turned off.' : 'Login turned on.');\n  }\n  default:\n    return reject(400, 'Unknown action.');\n}\n"
+      }
+    },
+    {
+      "id": "99cded72-3a04-4c7d-9a01-5380b7131443",
+      "name": "Plan ok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "66381136-584b-4dc9-b7d2-51c066c00a96",
+              "leftValue": "={{ $json.valid === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d3d061b2-73b1-450c-a935-40e495fbe961",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2420,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.body ?? {}) }}",
+        "options": {
+          "responseCode": "={{ $json.status || 200 }}"
+        }
+      }
+    },
+    {
+      "id": "43e52b01-5a32-4ee1-a0d7-c04a6e7f2666",
+      "name": "Create login?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "e62278a0-4c87-4c54-abdf-96477fe96eec",
+              "leftValue": "={{ $json.kind === 'create_login' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cde7a157-6fa7-4203-95da-4df43dabdaf5",
+      "name": "Run requests",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        600
+      ],
+      "parameters": {
+        "method": "={{ $json.method }}",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/{{ $json.path }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "={{ $json.prefer || 'return=minimal' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body ?? {}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Auth Admin API (auth/v1/admin/users) and PostgREST, both with the service role credential."
+    },
+    {
+      "id": "300cd01d-4fb2-481c-a0d2-02e37f250eb2",
+      "name": "Summarize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        600
+      ],
+      "parameters": {
+        "jsCode": "// Answer for the generic requests path. Each input is the response to one\n// planned request (matched with itemMatching). The first failure wins.\nconst inputs = $input.all();\nlet firstData = null;\nlet message = 'Done.';\nfor (let i = 0; i < inputs.length; i++) {\n  const r = inputs[i].json || {};\n  const plan = $('Plan').itemMatching(i).json;\n  message = plan.message || message;\n  const ok = r.statusCode >= 200 && r.statusCode < 300;\n  if (!ok) {\n    const body = r.body || {};\n    const detail = body.message || body.msg || body.error_description || body.error || (r.error && r.error.message) || `status ${r.statusCode}`;\n    const status = r.statusCode === 409 || /duplicate key/i.test(String(detail)) ? 409 : 502;\n    const friendly = /clients_slug_key/.test(String(detail)) ? 'A client with that slug already exists.' : String(detail).slice(0, 300);\n    return [{ json: { status, body: { error: friendly } } }];\n  }\n  if (firstData === null) firstData = Array.isArray(r.body) ? r.body[0] ?? null : r.body ?? null;\n}\nreturn [{ json: { status: 200, body: { ok: true, message, data: firstData } } }];\n"
+      }
+    },
+    {
+      "id": "22dd0553-fe20-499e-afb9-f6edc2446efc",
+      "name": "Create auth user",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/admin/users",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ email: $json.email, password: $json.password, email_confirm: true }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "notes": "Supabase Auth Admin API. The password is not stored anywhere else and is never returned."
+    },
+    {
+      "id": "721a0c13-80e3-4b66-9402-e81d01099aa7",
+      "name": "Check user",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Result of POST /auth/v1/admin/users. The password is never echoed back.\nconst r = $input.first().json || {};\nconst body = r.body || {};\nif (r.statusCode >= 200 && r.statusCode < 300 && body.id) {\n  return [{ json: { ok: true, user_id: body.id } }];\n}\nconst detail = String(body.msg || body.message || body.error_description || body.error || `status ${r.statusCode}`);\nconst exists = /already|registered|exists/i.test(detail);\nreturn [{\n  json: {\n    ok: false,\n    status: exists ? 409 : 502,\n    body: { error: exists ? 'A login with that email already exists.' : `Could not create the login: ${detail.slice(0, 200)}` },\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "47813137-f1c6-47cc-99e2-f9045eaac54b",
+      "name": "User created?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "b60ace22-bb78-4c56-b917-fffb55956891",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "dbb7adbf-3aa6-45d3-96bb-aafbb887ca32",
+      "name": "Save profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        -200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ user_id: $('Check user').first().json.user_id, email: $('Plan').first().json.email, role: $('Plan').first().json.role, client_id: $('Plan').first().json.client_id, created_by: $('Auth: check role').first().json.user.user_id }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      }
+    },
+    {
+      "id": "bd1d4b77-854f-4add-9773-d54bfd83dd82",
+      "name": "Check profile",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// Result of inserting the profiles row. If it failed, the auth user just\n// created is deleted next (\"Remove auth user\"), so no login exists without a role.\nconst r = $input.first().json || {};\nconst plan = $('Plan').first().json;\nconst created = $('Check user').first().json;\nif (r.statusCode >= 200 && r.statusCode < 300) {\n  return [{\n    json: {\n      ok: true,\n      status: 200,\n      body: { ok: true, message: 'Login created.', data: { user_id: created.user_id, email: plan.email, role: plan.role } },\n    },\n  }];\n}\nconst body = r.body || {};\nreturn [{\n  json: {\n    ok: false,\n    user_id: created.user_id,\n    status: 502,\n    body: { error: `The login could not be finished and was removed again: ${String(body.message || r.statusCode).slice(0, 200)}` },\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "fb3a708a-6145-4538-b026-afdaa79e9b9e",
+      "name": "Profile saved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        -200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "f003192d-d154-4c42-812e-467d1c3de6e7",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "2b5aa8f3-0bd5-40fa-9de2-3c2394665f95",
+      "name": "Remove auth user",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3960,
+        0
+      ],
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/admin/users/{{ $json.user_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "notes": "Undo: no login may exist without a profile (role)."
+    },
+    {
+      "id": "76174b30-2698-40aa-81e6-10fd8c5970b4",
+      "name": "Profile failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: $('Check profile').first().json }];"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Auth: read token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: read token": {
+      "main": [
+        [
+          {
+            "node": "Auth: verify token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: verify token": {
+      "main": [
+        [
+          {
+            "node": "Auth: load profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: load profile": {
+      "main": [
+        [
+          {
+            "node": "Auth: check role",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: check role": {
+      "main": [
+        [
+          {
+            "node": "Auth: allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: allowed?": {
+      "main": [
+        [
+          {
+            "node": "Load target login",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: denied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load target login": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Plan ok?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan ok?": {
+      "main": [
+        [
+          {
+            "node": "Create login?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create login?": {
+      "main": [
+        [
+          {
+            "node": "Create auth user",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Run requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run requests": {
+      "main": [
+        [
+          {
+            "node": "Summarize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create auth user": {
+      "main": [
+        [
+          {
+            "node": "Check user",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check user": {
+      "main": [
+        [
+          {
+            "node": "User created?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "User created?": {
+      "main": [
+        [
+          {
+            "node": "Save profile",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save profile": {
+      "main": [
+        [
+          {
+            "node": "Check profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check profile": {
+      "main": [
+        [
+          {
+            "node": "Profile saved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Profile saved?": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Remove auth user",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove auth user": {
+      "main": [
+        [
+          {
+            "node": "Profile failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Profile failed": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "none",
+    "saveManualExecutions": false
+  },
+  "active": false,
+  "tags": []
+}

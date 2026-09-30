@@ -1,0 +1,33 @@
+# FF Google Ads dashboard. The site lives in web/.
+# Environment variables (Netlify UI > Site configuration > Environment variables):
+#   VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_N8N_BASE_URL, VITE_APP_ENV
+# Never add the Supabase service role key or any Google Ads secret here.
+
+[build]
+  base = "web"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# The Content-Security-Policy is injected into index.html at build time
+# (web/vite.config.ts), because it depends on the Supabase and n8n origins.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+    X-Robots-Tag = "noindex, nofollow"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

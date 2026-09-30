@@ -1,0 +1,843 @@
+{
+  "name": "ff-client-message",
+  "nodes": [
+    {
+      "id": "2f1672f3-31a0-4704-92ca-ac83e35afa2d",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "ff-client-message",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ff/client-message",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "http://localhost:5173"
+        }
+      },
+      "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
+    },
+    {
+      "id": "4fa97ef9-d6e6-4deb-9cef-2cad6bd7c3dd",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ff-client-message: a client (or FF on their behalf) posts a suggestion; AI drafts a reply for FF to review (reference client-message-to-draft).\n// Non-secret settings. Secrets are n8n credentials (see the workflow notes);\n// the Supabase service role key is only in \"FF Supabase (service role)\".\nconst SETTINGS = {\n  \"SUPABASE_URL\": \"https://SET-ME.supabase.co\",\n  \"SUPABASE_ANON_KEY\": \"SET-ME\",\n  \"ALLOWED_ROLES\": [\n    \"rob_admin\",\n    \"ff_staff\",\n    \"client_viewer\"\n  ],\n  \"SLACK_CHANNEL\": \"\"\n};\n\nconst src = $input.first().json || {};\nreturn [{ json: { ...SETTINGS, body: src.body && typeof src.body === 'object' ? src.body : {} } }];\n"
+      },
+      "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
+    },
+    {
+      "id": "a11172fe-95c7-48b4-9a8e-a32161a37602",
+      "parameters": {
+        "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
+      },
+      "name": "Auth: read token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
+    },
+    {
+      "id": "720a7c95-e7ff-48ff-907c-871725f3860a",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Config').first().json.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token || 'missing' }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: verify token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        300
+      ],
+      "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
+    },
+    {
+      "id": "58616050-b431-4706-aebb-16b772f4ec0b",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "=eq.{{ (($json.statusCode === 200 && $json.body && /^[0-9a-f-]{36}$/.test($json.body.id)) ? $json.body.id : '00000000-0000-0000-0000-000000000000') }}"
+            },
+            {
+              "name": "select",
+              "value": "user_id,email,role,client_id,disabled"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: load profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
+    },
+    {
+      "id": "67d61b2d-c968-42a7-87d8-8047d93da6be",
+      "parameters": {
+        "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
+      },
+      "name": "Auth: check role",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ],
+      "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
+    },
+    {
+      "id": "7ef91018-7d28-4af0-815d-c4ab9ae4c9e9",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "a1b2c3d4-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Auth: allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ]
+    },
+    {
+      "id": "3d6347bc-3bf4-4df5-aee8-7a24cac21de4",
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "name": "Respond: denied",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        500
+      ],
+      "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
+    },
+    {
+      "id": "17734be3-4c91-4404-b5cd-21ff85012343",
+      "name": "Get campaign",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/campaigns?id=eq.{{ /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String($('Config').first().json.body.campaign_row_id || '')) ? $('Config').first().json.body.campaign_row_id : '00000000-0000-0000-0000-000000000000' }}&select=customer_id,campaign_id,name,ad_accounts(client_id)",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "40b270b7-36e4-4410-b5e7-a2c7eee8f9da",
+      "name": "Validate input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/names.js (included by scripts/build-n8n.mjs) ------------------\n// Hard rule 4: no family or deceased names in columns, logs or AI prompts.\n// PLAN.md 5.4 - the exact rules still need Rob's sign-off.\n//\n// makeNameFilters(extraAllowPhrases) returns:\n//   filterTerm(raw)   -> { stored, filtered } for search terms: a name-bearing\n//                        term becomes \"[name removed - <intent>]\"\n//   redactNames(text) -> free text (messages, chat) with name words replaced\n//                        by \"[name]\"\n// A term is name-bearing when it has an obituary/death-notice phrase, a common\n// first name that is not an allowed word, or a common surname with no\n// funeral-business word next to it (\"smith funeral home\" is a business and is\n// kept; \"john smith\" is not). Removing a harmless word is the safe direction.\n\nconst NAME_INTENT = [\n  ['obituary', 'obituary'], ['obituaries', 'obituary'], ['obit', 'obituary'], ['obits', 'obituary'],\n  ['passed away', 'death notice'], ['death notice', 'death notice'], ['death notices', 'death notice'],\n  ['in loving memory', 'memorial'], ['celebration of life for', 'memorial'], ['memorial for', 'memorial'],\n  ['service for', 'service'], ['services for', 'service'], ['visitation for', 'service'], ['funeral for', 'service'],\n  ['condolences', 'obituary'], ['guestbook', 'obituary'], ['guest book', 'obituary'],\n];\nconst FIRST_NAMES = new Set(('james john robert michael william david richard joseph thomas charles christopher daniel matthew anthony ' +\n  'donald steven paul andrew joshua kenneth kevin brian george timothy ronald edward jason jeffrey ryan jacob gary nicholas eric ' +\n  'jonathan stephen larry justin scott brandon benjamin samuel gregory alexander frank patrick raymond dennis tyler aaron jose adam ' +\n  'nathan henry douglas zachary peter kyle ethan walter noah jeremy christian keith roger terry gerald harold sean austin carl arthur ' +\n  'lawrence dylan jesse jordan bryan billy joe bruce gabriel logan albert willie alan juan wayne elijah randy roy vincent ralph eugene ' +\n  'russell bobby louis philip johnny howard fred earl jimmy leonard stanley norman lloyd clarence herbert ernest melvin francis ' +\n  'mary patricia jennifer linda elizabeth barbara susan jessica sarah karen lisa nancy betty margaret sandra ashley kimberly emily donna ' +\n  'michelle carol amanda dorothy melissa deborah stephanie rebecca sharon laura cynthia kathleen amy angela shirley anna brenda pamela ' +\n  'emma nicole helen samantha katherine christine debra rachel carolyn janet catherine maria heather diane julie joyce victoria kelly ' +\n  'christina lauren joan evelyn olivia judith megan cheryl martha andrea frances hannah jacqueline gloria teresa kathryn sara janice ' +\n  'jean alice madison doris abigail julia judy beverly denise marilyn danielle theresa sophia marie diana brittany natalie isabella ' +\n  'charlotte irene alexis kayla lori tiffany gladys wanda mildred dolores edna ethel lillian thelma bernice norma florence ' +\n  'eleanor agnes louise ruth anne annie marjorie esther virginia phyllis lois geraldine loretta darlene connie peggy ' +\n  'mohammed muhammad ahmed ali fatima priya raj wei li chen nguyen').split(/\\s+/));\nconst SURNAMES = new Set(('smith johnson williams jones garcia miller davis rodriguez martinez hernandez lopez gonzalez wilson anderson ' +\n  'thomas taylor moore jackson martin lee perez thompson harris sanchez clark ramirez lewis robinson walker allen wright scott torres ' +\n  'nguyen flores adams nelson baker hall rivera campbell mitchell carter roberts gomez phillips evans turner diaz parker cruz edwards ' +\n  'collins reyes stewart morris morales murphy cook rogers gutierrez ortiz morgan cooper peterson bailey reed kelly howard ramos kim ' +\n  'cox ward richardson watson brooks chavez wood james bennett gray mendoza ruiz hughes alvarez castillo sanders patel myers long ross ' +\n  'foster jimenez powell jenkins perry russell sullivan bell coleman butler henderson barnes gonzales fisher vasquez simmons romero ' +\n  'jordan patterson alexander hamilton graham reynolds griffin wallace moreno west cole hayes bryant herrera gibson ellis tran medina ' +\n  'aguilar stevens murray ford castro marshall owens harrison fernandez mcdonald woods washington kennedy wells vargas henry chen ' +\n  'freeman webb tucker guzman burns crawford olson simpson porter hunter gordon mendez silva shaw snyder mason dixon munoz hunt hicks ' +\n  'holmes palmer wagner black robertson boyd rose stone salazar fox warren mills meyer rice schmidt garza daniels ferguson nichols ' +\n  'stephens soto weaver ryan gardner payne grant dunn kelley spencer hawkins arnold pierce hansen peters santos hart bradley knight ' +\n  'elliott cunningham duncan armstrong hudson carroll lane riley andrews ray berry perkins hoffman johnston matthews pena richards ' +\n  'willis carpenter lawrence sandoval').split(/\\s+/));\n// Words that are also names but common in funeral searches, or are places.\nconst NAME_ALLOW = new Set(('home homes funeral funerals cremation cremations crematory crematorium mortuary chapel chapels cemetery ' +\n  'burial burials memorial memorials service services casket caskets urn urns direct cost costs price prices near me the and of for ' +\n  'in with how much what is a to plan plans preplan pre planning prepaid prearranged arrangements cheap affordable best top local ' +\n  'grace hope faith joy rose may june april august summer dawn lily ivy pearl ruby crystal amber holly will mark long hall bell stone ' +\n  'wood woods hill park ward west north south east wells love price cook church king young green white brown black gray grey rice ' +\n  'lane grant hunt fox shaw reed bailey mason hunter parker cooper carter brooks gardner ford washington jordan virginia ' +\n  'florence charlotte victoria madison austin eugene lawrence augusta marshall franklin lincoln jackson hamilton warren').split(/\\s+/));\nconst NAME_BUSINESS = new Set('funeral funerals home homes mortuary chapel chapels cremation cremations crematory crematorium cemetery memorial'.split(' '));\n\nfunction makeNameFilters(extraAllowPhrases) {\n  const extra = new Set();\n  for (const phrase of extraAllowPhrases || []) {\n    for (const w of String(phrase).toLowerCase().split(/[^a-z0-9']+/)) if (w) extra.add(w);\n  }\n  const allowed = (w) => NAME_ALLOW.has(w) || extra.has(w);\n  // \"smith's\" / \"smiths'\" -> \"smith\", so possessives do not slip through.\n  const base = (w) => w.replace(/'s$|'$/, '');\n  const isName = (w) => (FIRST_NAMES.has(base(w)) || SURNAMES.has(base(w))) && !allowed(base(w));\n\n  function filterTerm(raw) {\n    const term = String(raw || '').toLowerCase().replace(/\\s+/g, ' ').trim();\n    for (const [phrase, intent] of NAME_INTENT) {\n      if (` ${term} `.includes(` ${phrase} `)) return { stored: `[name removed - ${intent}]`, filtered: true };\n    }\n    const words = term.split(/[^a-z0-9']+/).filter(Boolean);\n    const hasBusiness = words.some((w) => NAME_BUSINESS.has(w));\n    if (words.some((w) => FIRST_NAMES.has(base(w)) && !allowed(base(w)))) return { stored: '[name removed - name]', filtered: true };\n    if (!hasBusiness && words.some((w) => SURNAMES.has(base(w)) && !allowed(base(w)))) return { stored: '[name removed - name]', filtered: true };\n    return { stored: term, filtered: false };\n  }\n\n  function redactNames(text) {\n    return String(text || '').replace(/[A-Za-z][A-Za-z']*/g, (word) => (isName(word.toLowerCase()) ? '[name]' : word));\n  }\n\n  return { filterTerm, redactNames };\n}\n// ---- end shared/names.js ----------------------------------------------------\n\n// ---- shared/ai.js (included by scripts/build-n8n.mjs) ----------------------\n// Checks and cleans what the AI returns before it is stored.\n\nconst ACTION_TYPES = ['update_daily_budget', 'pause_campaign', 'resume_campaign'];\n\n// Hard rule 6: calm tone, plain hyphens, no emoji.\nfunction cleanText(text) {\n  return String(text || '')\n    .replace(/[‒-―−]/g, '-')\n    .replace(/[‘’]/g, \"'\")\n    .replace(/[“”]/g, '\"')\n    .replace(/\\p{Extended_Pictographic}️?/gu, '')\n    .replace(/[ \\t]+\\n/g, '\\n')\n    .trim();\n}\n\n// Only the three reference action types survive; anything else becomes null.\n// daily_budget is in the account currency.\nfunction normalizeAction(a) {\n  if (!a || typeof a !== 'object' || !ACTION_TYPES.includes(a.action_type)) return null;\n  const out = { action_type: a.action_type, daily_budget: null, reason: cleanText(a.reason || '').slice(0, 300) };\n  if (a.action_type === 'update_daily_budget') {\n    const n = Number(a.daily_budget);\n    if (!(n > 0 && n < 100000)) return null;\n    out.daily_budget = Math.round(n * 100) / 100;\n  }\n  return out;\n}\n\nconst money = (micros) => Math.round(Number(micros || 0) / 1e4) / 100;\nconst pct = (v) => (v === null || v === undefined ? 'n/a' : `${Math.round(Number(v) * 100)}%`);\n// ---- end shared/ai.js -------------------------------------------------------\n\n// ---- shared/input.js (included by scripts/build-n8n.mjs) -------------------\n// Webhook input helpers. The caller always comes from the Auth check block,\n// never from the request body.\nconst UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst CUSTOMER_RE = /^[0-9]{10}$/;\nconst ZERO_UUID = '00000000-0000-0000-0000-000000000000';\n\nconst requestBody = () => {\n  const b = $('Config').first().json.body;\n  return b && typeof b === 'object' ? b : {};\n};\nconst caller = () => $('Auth: check role').first().json.user;\nconst isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);\nconst customerId = (v) => {\n  const d = String(v === undefined || v === null ? '' : v).replace(/-/g, '');\n  return CUSTOMER_RE.test(d) ? d : null;\n};\nconst text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');\n\n// Every \"result\" item carries { status, body } for the generic Respond node.\nconst reject = (status, error) => [{ json: { valid: false, status, body: { error } } }];\nconst reply = (status, body) => [{ json: { status, body } }];\n// ---- end shared/input.js ----------------------------------------------------\n\n// Body: { client_id, body, campaign_row_id? }\n// A client login may only post to its own client, and only about its own\n// campaigns. Names in the text are replaced with [name] before storage\n// (hard rule 4) - the portal also asks clients not to include them.\nconst b = requestBody();\nconst user = caller();\nconst campaign = $input.first().json || {};\n\nif (!isUuid(b.client_id)) return reject(400, 'client_id is missing or not valid.');\nif (user.role === 'client_viewer' && user.client_id !== b.client_id) {\n  return reject(403, 'You can only send suggestions for your own account.');\n}\nconst raw = text(b.body, 4000);\nif (!raw) return reject(400, 'The message is empty.');\n\nlet customerIdValue = null;\nlet campaignIdValue = null;\nlet campaignName = null;\nif (b.campaign_row_id !== undefined && b.campaign_row_id !== null && b.campaign_row_id !== '') {\n  if (!isUuid(b.campaign_row_id)) return reject(400, 'campaign_row_id is not valid.');\n  const owner = campaign.ad_accounts && campaign.ad_accounts.client_id;\n  if (!campaign.customer_id || owner !== b.client_id) return reject(404, 'Campaign not found for this client.');\n  customerIdValue = campaign.customer_id;\n  campaignIdValue = campaign.campaign_id;\n  campaignName = campaign.name;\n}\n\nconst { redactNames } = makeNameFilters([campaignName || '']);\nreturn [{\n  json: {\n    valid: true,\n    row: {\n      client_id: b.client_id,\n      customer_id: customerIdValue,\n      campaign_id: campaignIdValue,\n      direction: 'inbound',\n      body: cleanText(redactNames(raw)),\n      status: 'new',\n      author_id: user.user_id,\n    },\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "93cc8f7e-04b6-4936-adc7-5b0db20783dc",
+      "name": "Validate input ok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "02a89cc2-bd77-4442-ba06-d380d59be266",
+              "leftValue": "={{ $json.valid === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "3190a9c0-6640-4e81-847b-508a931e6ec6",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2420,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.body ?? {}) }}",
+        "options": {
+          "responseCode": "={{ $json.status || 200 }}"
+        }
+      }
+    },
+    {
+      "id": "d4d9d998-99c6-4030-9aa7-3904857460bf",
+      "name": "Save message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/client_messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.row) }}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      }
+    },
+    {
+      "id": "1353a3f0-a1ae-4243-9c50-48946d7d23ff",
+      "name": "Get message context",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/rpc/ff_message_context",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_client_id: $json.client_id, p_customer_id: $json.customer_id, p_campaign_id: $json.campaign_id }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      }
+    },
+    {
+      "id": "9c52661e-71cd-4e83-a1ae-2f48a955fa23",
+      "name": "Build AI context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// ff_message_context -> prompt text (reference \"Build AI context\" for the\n// client portal). Picks the campaign the client chose; otherwise lists the\n// client's campaigns so the draft does not guess (reference lesson).\nconst ctx = $input.first().json || {};\nconst msg = $('Save message').first().json;\nconst campaign = ctx.campaign;\nlet campaignText;\nif (campaign && campaign.campaign) {\n  const c = campaign.campaign;\n  const p = campaign.last_30_days || {};\n  const calls = campaign.calls_30d || {};\n  const cur = c.currency || '';\n  campaignText = `The client asked about campaign \"${c.name}\" (status ${c.status}, daily budget ${c.daily_budget} ${cur}). ` +\n    `Last 30 days: cost ${p.cost ?? 0} ${cur}, ${p.clicks ?? 0} clicks, ${p.conversions ?? 0} conversions, ` +\n    `${calls.total ?? 0} calls (${calls.over_90s ?? 0} of 90 seconds or more). Open Google recommendations: ` +\n    `${(campaign.recommendations || []).map((r) => r.type).join(', ') || 'none'}.`;\n} else {\n  const list = (ctx.campaigns || []).map((c) => `\"${c.name}\" (${c.status}, daily budget ${c.daily_budget})`);\n  campaignText = `The client did not pick a campaign. Their campaigns: ${list.join('; ') || 'none yet'}.`;\n}\n\nreturn [{ json: { clientName: ctx.client || 'the client', campaignText, clientMessage: msg.body } }];\n"
+      }
+    },
+    {
+      "id": "5960d914-f386-4193-8029-d6c4c199d0ae",
+      "name": "Draft reply (AI Agent)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        3080,
+        200
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Client: {{ $json.clientName }}.\n{{ $json.campaignText }}\n\nClient's message:\n{{ $json.clientMessage }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You draft a reply from Funeral Futurist (FF), a Google Ads agency, to a message a funeral home or cremation client sent in the FF dashboard. FF staff will read and edit the draft before anything is sent. Be warm, brief and clear; do not promise anything; if the client asks for a change, say FF is reviewing it, not that it is done.\n\nWrite in a calm, plain, respectful tone - these are funeral homes and cremation providers. Use plain hyphens (-), never long dashes, and no emoji. Never write personal names of families or of people who have died; if the text you were given contains [name], keep it as [name]. Only use the numbers you were given; never invent data.\n\nproposed_action must be null UNLESS one of exactly these three changes is clearly wanted:\n- \"update_daily_budget\": set the daily budget to a specific amount in the account currency. daily_budget is required and must be a plain number. If no amount is clear, ask a short clarifying question and leave proposed_action null.\n- \"pause_campaign\": pause the campaign.\n- \"resume_campaign\": resume a paused campaign.\nFor pause_campaign and resume_campaign set daily_budget to null. Always add a one-sentence reason. Never say a change has been made - say it is ready for Rob to confirm (only Rob can apply changes). Anything else (targeting, keywords, ad copy, questions) gets proposed_action: null and a normal answer."
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "onError continueRegularOutput: a malformed model output must not stop the workflow (reference lesson). The next Code node treats it as no answer."
+    },
+    {
+      "id": "22116f9a-d7ae-41f7-b839-23bdad38c3cb",
+      "name": "Draft reply (AI Agent) - OpenAI model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        3000,
+        420
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "",
+          "name": "FF OpenAI"
+        }
+      },
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "72141bd5-2400-4c5b-bcd9-f2b8fc61b224",
+      "name": "Draft reply (AI Agent) - output format",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        3200,
+        420
+      ],
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"reply\": {\n      \"type\": \"string\"\n    },\n    \"proposed_action\": {\n      \"type\": [\n        \"object\",\n        \"null\"\n      ],\n      \"properties\": {\n        \"action_type\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"update_daily_budget\",\n            \"pause_campaign\",\n            \"resume_campaign\"\n          ]\n        },\n        \"daily_budget\": {\n          \"type\": [\n            \"number\",\n            \"null\"\n          ]\n        },\n        \"reason\": {\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"action_type\",\n        \"daily_budget\",\n        \"reason\"\n      ]\n    }\n  },\n  \"required\": [\n    \"reply\",\n    \"proposed_action\"\n  ]\n}"
+      }
+    },
+    {
+      "id": "64e1dc43-5e25-43ab-8196-a6ed379c6b72",
+      "name": "Prepare draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/ai.js (included by scripts/build-n8n.mjs) ----------------------\n// Checks and cleans what the AI returns before it is stored.\n\nconst ACTION_TYPES = ['update_daily_budget', 'pause_campaign', 'resume_campaign'];\n\n// Hard rule 6: calm tone, plain hyphens, no emoji.\nfunction cleanText(text) {\n  return String(text || '')\n    .replace(/[‒-―−]/g, '-')\n    .replace(/[‘’]/g, \"'\")\n    .replace(/[“”]/g, '\"')\n    .replace(/\\p{Extended_Pictographic}️?/gu, '')\n    .replace(/[ \\t]+\\n/g, '\\n')\n    .trim();\n}\n\n// Only the three reference action types survive; anything else becomes null.\n// daily_budget is in the account currency.\nfunction normalizeAction(a) {\n  if (!a || typeof a !== 'object' || !ACTION_TYPES.includes(a.action_type)) return null;\n  const out = { action_type: a.action_type, daily_budget: null, reason: cleanText(a.reason || '').slice(0, 300) };\n  if (a.action_type === 'update_daily_budget') {\n    const n = Number(a.daily_budget);\n    if (!(n > 0 && n < 100000)) return null;\n    out.daily_budget = Math.round(n * 100) / 100;\n  }\n  return out;\n}\n\nconst money = (micros) => Math.round(Number(micros || 0) / 1e4) / 100;\nconst pct = (v) => (v === null || v === undefined ? 'n/a' : `${Math.round(Number(v) * 100)}%`);\n// ---- end shared/ai.js -------------------------------------------------------\n\n// AI draft -> message_drafts row. The draft is for FF staff to review and edit\n// in the dashboard; the client never sees it until staff send a reply.\nconst msg = $('Save message').first().json;\nconst item = $input.first().json || {};\nconst out = item.output;\n\nlet draft = 'No draft could be written for this message. Please reply by hand.';\nlet action = null;\nif (!item.error && out && typeof out.reply === 'string' && out.reply.trim()) {\n  draft = cleanText(out.reply).slice(0, 4000);\n  action = normalizeAction(out.proposed_action);\n}\n\nreturn [{\n  json: {\n    message_id: msg.id,\n    draft_body: draft,\n    proposed_action: action,\n    action_status: action ? 'proposed' : null,\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "5dc6e783-8c31-4101-b636-c3e468eb3f4a",
+      "name": "Save draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3520,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/message_drafts?on_conflict=message_id",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      }
+    },
+    {
+      "id": "d5bf72f5-f1ac-4f8d-b601-c9bf2634f9ea",
+      "name": "Mark drafted",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3740,
+        200
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/client_messages?id=eq.{{ $('Save message').first().json.id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'drafted' }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      }
+    },
+    {
+      "id": "83fc1bea-b582-4c91-ada7-87f119dea80b",
+      "name": "Message result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        200
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { status: 200, body: { ok: true, id: $('Save message').first().json.id } } }];"
+      }
+    },
+    {
+      "id": "1e517765-f048-4636-85da-b171dec83dd8",
+      "name": "Tell FF on Slack?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4400,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "1b6f3b92-af12-47a1-8bab-2be6bc04c131",
+              "leftValue": "={{ Boolean($('Config').first().json.SLACK_CHANNEL) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e919f74b-0d99-4a3f-bcc2-d062bf07f83c",
+      "name": "Notify FF",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        4620,
+        200
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "FF Slack"
+        }
+      },
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.SLACK_CHANNEL }}",
+          "mode": "name"
+        },
+        "text": "=New client suggestion - please review it in the dashboard (Client Suggestions).",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Optional. Needs the 'FF Slack' credential and SLACK_CHANNEL in Config; a Slack failure never stops the workflow."
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Auth: read token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: read token": {
+      "main": [
+        [
+          {
+            "node": "Auth: verify token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: verify token": {
+      "main": [
+        [
+          {
+            "node": "Auth: load profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: load profile": {
+      "main": [
+        [
+          {
+            "node": "Auth: check role",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: check role": {
+      "main": [
+        [
+          {
+            "node": "Auth: allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: allowed?": {
+      "main": [
+        [
+          {
+            "node": "Get campaign",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: denied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get campaign": {
+      "main": [
+        [
+          {
+            "node": "Validate input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate input": {
+      "main": [
+        [
+          {
+            "node": "Validate input ok?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate input ok?": {
+      "main": [
+        [
+          {
+            "node": "Save message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft reply (AI Agent) - OpenAI model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Draft reply (AI Agent)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft reply (AI Agent) - output format": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Draft reply (AI Agent)",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save message": {
+      "main": [
+        [
+          {
+            "node": "Get message context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get message context": {
+      "main": [
+        [
+          {
+            "node": "Build AI context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build AI context": {
+      "main": [
+        [
+          {
+            "node": "Draft reply (AI Agent)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft reply (AI Agent)": {
+      "main": [
+        [
+          {
+            "node": "Prepare draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare draft": {
+      "main": [
+        [
+          {
+            "node": "Save draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save draft": {
+      "main": [
+        [
+          {
+            "node": "Mark drafted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark drafted": {
+      "main": [
+        [
+          {
+            "node": "Message result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message result": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond": {
+      "main": [
+        [
+          {
+            "node": "Tell FF on Slack?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tell FF on Slack?": {
+      "main": [
+        [
+          {
+            "node": "Notify FF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

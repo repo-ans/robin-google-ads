@@ -1,0 +1,749 @@
+{
+  "name": "ff-audit",
+  "nodes": [
+    {
+      "id": "a021a4ca-c29a-4ef4-a876-631557cac64c",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "ff-audit",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ff/audit",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "http://localhost:5173"
+        }
+      },
+      "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
+    },
+    {
+      "id": "7860f1f9-1256-47ad-acfb-9535361069e3",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ff-audit: read-only audit of one account from synced data (campaigns, settings, tracking, 90 days of search terms, negatives, issues). Rob marks it reviewed.\n// Non-secret settings. Secrets are n8n credentials (see the workflow notes);\n// the Supabase service role key is only in \"FF Supabase (service role)\".\nconst SETTINGS = {\n  \"SUPABASE_URL\": \"https://SET-ME.supabase.co\",\n  \"SUPABASE_ANON_KEY\": \"SET-ME\",\n  \"ALLOWED_ROLES\": [\n    \"rob_admin\",\n    \"ff_staff\"\n  ]\n};\n\nconst src = $input.first().json || {};\nreturn [{ json: { ...SETTINGS, body: src.body && typeof src.body === 'object' ? src.body : {} } }];\n"
+      },
+      "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
+    },
+    {
+      "id": "deec52d4-18b6-4ca6-85c4-f424ea25a50d",
+      "parameters": {
+        "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
+      },
+      "name": "Auth: read token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
+    },
+    {
+      "id": "aba625d1-37eb-4a45-b8ad-731f42776ade",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Config').first().json.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token || 'missing' }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: verify token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        300
+      ],
+      "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
+    },
+    {
+      "id": "284dfdf1-1a34-4451-872d-973686f054ff",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "=eq.{{ (($json.statusCode === 200 && $json.body && /^[0-9a-f-]{36}$/.test($json.body.id)) ? $json.body.id : '00000000-0000-0000-0000-000000000000') }}"
+            },
+            {
+              "name": "select",
+              "value": "user_id,email,role,client_id,disabled"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: load profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
+    },
+    {
+      "id": "ea1c0106-6712-457e-a63e-728d643cfdf1",
+      "parameters": {
+        "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
+      },
+      "name": "Auth: check role",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ],
+      "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
+    },
+    {
+      "id": "03f32fd9-19f8-4270-86f5-8a3a21ffa405",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "a1b2c3d4-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Auth: allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ]
+    },
+    {
+      "id": "2d183b28-09e2-462e-abf7-dc3b2c4af4d3",
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "name": "Respond: denied",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        500
+      ],
+      "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
+    },
+    {
+      "id": "a7a20fcc-d1bb-42f6-b036-71e5486d584a",
+      "name": "Validate input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/input.js (included by scripts/build-n8n.mjs) -------------------\n// Webhook input helpers. The caller always comes from the Auth check block,\n// never from the request body.\nconst UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst CUSTOMER_RE = /^[0-9]{10}$/;\nconst ZERO_UUID = '00000000-0000-0000-0000-000000000000';\n\nconst requestBody = () => {\n  const b = $('Config').first().json.body;\n  return b && typeof b === 'object' ? b : {};\n};\nconst caller = () => $('Auth: check role').first().json.user;\nconst isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);\nconst customerId = (v) => {\n  const d = String(v === undefined || v === null ? '' : v).replace(/-/g, '');\n  return CUSTOMER_RE.test(d) ? d : null;\n};\nconst text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');\n\n// Every \"result\" item carries { status, body } for the generic Respond node.\nconst reject = (status, error) => [{ json: { valid: false, status, body: { error } } }];\nconst reply = (status, body) => [{ json: { status, body } }];\n// ---- end shared/input.js ----------------------------------------------------\n\n// Body:\n//   { action: \"generate\", client_id, customer_id }   FF staff or Rob\n//   { action: \"review\", audit_id }                   rob_admin only - marks it read and approved\nconst b = requestBody();\nconst user = caller();\n\nif (b.action === 'generate') {\n  if (!isUuid(b.client_id)) return reject(400, 'client_id is missing or not valid.');\n  const cid = customerId(b.customer_id);\n  if (!cid) return reject(400, 'customer_id must be 10 digits.');\n  return [{ json: { valid: true, action: 'generate', client_id: b.client_id, customer_id: cid } }];\n}\nif (b.action === 'review') {\n  if (user.role !== 'rob_admin') return reject(403, 'Only Rob marks an audit as reviewed.');\n  if (!isUuid(b.audit_id)) return reject(400, 'audit_id is missing or not valid.');\n  return [{ json: { valid: true, action: 'review', audit_id: b.audit_id } }];\n}\nreturn reject(400, 'action must be generate or review.');\n"
+      }
+    },
+    {
+      "id": "44910142-eace-4b4c-83f0-b94f2c102b71",
+      "name": "Validate input ok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "f858771b-f6c9-42c8-8f58-db73323fae69",
+              "leftValue": "={{ $json.valid === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d0fa76ed-d738-4c83-ab57-15390708843f",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2200,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.body ?? {}) }}",
+        "options": {
+          "responseCode": "={{ $json.status || 200 }}"
+        }
+      }
+    },
+    {
+      "id": "c9d982bf-639f-444e-8579-5c0c352493d9",
+      "name": "Generate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "01ddbe80-30e8-4716-99a8-c9cf7164947a",
+              "leftValue": "={{ $json.action === 'generate' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9a70d6b2-3462-45db-b8a3-743aea367d41",
+      "name": "Get account",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/ad_accounts?customer_id=eq.{{ $json.customer_id }}&select=customer_id,client_id,descriptive_name,clients(name)",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "8bb70606-5b04-441e-99bd-cadabbf77e93",
+      "name": "Check account",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const a = $input.first().json || {};\nconst v = $('Validate input').first().json;\nreturn [{ json: a.client_id === v.client_id ? { ok: true } : { ok: false, status: 404, body: { error: 'That account does not belong to this client.' } } }];"
+      }
+    },
+    {
+      "id": "79863152-1cf3-4c2d-98a7-8e6de956b9c2",
+      "name": "Account ok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "898b3cb2-8764-4588-bfca-ecd6ba380128",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ae3148d6-d7fb-464f-bfdb-612dc1b3bd75",
+      "name": "Get audit data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        -200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/rpc/ff_audit_data",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_customer_id: $('Validate input').first().json.customer_id }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      }
+    },
+    {
+      "id": "ab3dde5b-20bd-46b9-9222-4fac581e1970",
+      "name": "Write audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// ff_audit_data -> Markdown audit + summary + issues (PLAN.md Phase 5 content:\n// campaigns, settings, conversion tracking, 90 days of search terms, negatives,\n// issues found). Read only. Search terms are already name-filtered.\n// Calm tone, plain hyphens, no emoji.\nconst v = $('Validate input').first().json;\nconst acctRow = $('Get account').first().json || {};\nconst user = $('Auth: check role').first().json.user;\nconst d = $input.first().json || {};\nconst a = d.account || {};\nconst cur = a.currency || '';\nconst period = d.period || {};\nconst campaigns = d.campaigns || [];\nconst conv = d.conversion_actions || [];\nconst kw = d.keywords || {};\n\nconst n = (x) => Number(x || 0);\nconst m = (x) => `${n(x).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`.trim();\nconst pct = (x) => (x === null || x === undefined ? 'n/a' : `${Math.round(n(x) * 100)}%`);\nconst esc = (s) => String(s === null || s === undefined ? '' : s).replace(/\\|/g, '/').replace(/\\n/g, ' ');\nconst table = (head, rows) => rows.length\n  ? [`| ${head.join(' | ')} |`, `| ${head.map(() => '---').join(' | ')} |`, ...rows.map((r) => `| ${r.map(esc).join(' | ')} |`)].join('\\n')\n  : '_None._';\n\nconst totalCost = campaigns.reduce((s, c) => s + n(c.cost), 0);\nconst totalConv = campaigns.reduce((s, c) => s + n(c.conversions), 0);\nconst totalClicks = campaigns.reduce((s, c) => s + n(c.clicks), 0);\nconst wasted = (d.search_terms_wasted || []).reduce((s, t) => s + n(t.cost), 0);\nconst calls = d.calls || {};\nconst geo = d.geo || {};\n\n// ---- Issues found, most important first\nconst issues = [];\nconst add = (severity, textValue) => issues.push({ severity, text: textValue });\nif (a.auto_tagging === false) add('high', 'Auto-tagging is off. Forms cannot capture the GCLID, so signed cases cannot be matched back to ads.');\nif (a.call_reporting === false) add('high', 'Call reporting is off. Calls of 90 seconds or more cannot be counted.');\nconst callActions = conv.filter((c) => ['AD_CALL', 'WEBSITE_CALL'].includes(c.type) && c.status === 'ENABLED');\nif (!callActions.length) add('high', 'There is no enabled call conversion action (calls from ads or from the website).');\nfor (const c of callActions.filter((x) => x.call_not_90s)) add('medium', `Call action \"${c.name}\" counts calls of ${c.call_seconds ?? 'the default'} seconds. The SOP asks for 90 seconds.`);\nfor (const c of conv.filter((x) => x.no_recent)) add('high', `Conversion action \"${c.name}\" has had spend but no conversions for 14+ days (last: ${c.last_conversion || 'never'}).`);\nif (!conv.some((c) => c.status === 'ENABLED' && c.primary)) add('high', 'No enabled primary conversion action - bidding has nothing to aim for.');\nfor (const c of campaigns) {\n  if (c.geo_type && c.geo_type !== 'PRESENCE') add('medium', `\"${c.name}\" also targets people only interested in the area. The SOP asks for presence only.`);\n  if (c.network_partners || c.network_display) add('medium', `\"${c.name}\" runs on the Search Partners or Display network. The SOP asks for Google Search only.`);\n  if (n(c.budget_lost_is) > 0.2) add('medium', `\"${c.name}\" lost ${pct(c.budget_lost_is)} of possible impressions to budget.`);\n  if (n(c.rank_lost_is) > 0.3) add('low', `\"${c.name}\" lost ${pct(c.rank_lost_is)} of possible impressions to ad rank.`);\n  if (!c.locations) add('high', `\"${c.name}\" has no location targeting.`);\n}\nif (n(kw.broad) > 0) add('medium', `${kw.broad} active keyword(s) use broad match. The SOP asks for phrase or exact only.`);\nfor (const g of (d.ad_groups_keyword_counts || []).filter((x) => n(x.keywords) < 5 || n(x.keywords) > 15)) {\n  add('low', `Ad group \"${g.ad_group}\" has ${g.keywords} keywords. The SOP asks for 5 to 15.`);\n}\nif (n(kw.low_quality) > 0) add('low', `${kw.low_quality} keyword(s) have a Quality Score below 5.`);\nif (d.ads && n(d.ads.disapproved) > 0) add('high', `${d.ads.disapproved} enabled ad(s) are disapproved.`);\nif (!(d.shared_lists || []).length) add('medium', 'No shared negative keyword list. The SOP uses one universal list.');\nif (wasted > 0) add('medium', `${m(wasted)} went to the top search terms with clicks but no conversions in 90 days (see the list below).`);\nif (n(geo.interest_cost) > 0) add('medium', `${m(geo.interest_cost)} was spent on people outside the target area (area of interest).`);\nif (!n(d.assets && d.assets.CALL)) add('medium', 'No call asset (call extension) found.');\nif ((d.recommendations || []).length) add('low', `${d.recommendations.length} Google recommendation(s) are open - review, do not auto-apply.`);\nif (n(d.changes_30d && d.changes_30d.GOOGLE_ADS_API) > 0) add('low', `${d.changes_30d.GOOGLE_ADS_API} change(s) in the last 30 days came through the API.`);\nconst order = { high: 0, medium: 1, low: 2 };\nissues.sort((x, y) => order[x.severity] - order[y.severity]);\n\n// ---- Markdown\nconst title = `${acctRow.clients ? acctRow.clients.name : 'Client'} - Google Ads audit`;\nconst md = [\n  `# ${title}`,\n  '',\n  `Account ${a.name || ''} (${String(a.customer_id || '').replace(/(\\d{3})(\\d{3})(\\d{4})/, '$1-$2-$3')}) - period ${period.from} to ${period.to}.`,\n  `Read only: nothing was changed in Google Ads to make this report. Generated ${new Date().toISOString().slice(0, 10)}.`,\n  '',\n  '## Summary',\n  '',\n  `- Spend: ${m(totalCost)} over ${campaigns.length} campaign(s) with spend`,\n  `- Clicks: ${totalClicks.toLocaleString('en-US')}; conversions: ${Math.round(totalConv * 100) / 100}`,\n  `- Calls: ${n(calls.total)} (${n(calls.over_90s)} of 90 seconds or more, ${n(calls.missed)} missed)`,\n  `- Issues found: ${issues.filter((i) => i.severity === 'high').length} high, ${issues.filter((i) => i.severity === 'medium').length} medium, ${issues.filter((i) => i.severity === 'low').length} low`,\n  '',\n  '## Issues found',\n  '',\n  ...(issues.length ? issues.map((i) => `- **${i.severity}** - ${i.text}`) : ['- Nothing stood out.']),\n  '',\n  '## Account settings',\n  '',\n  table(['Setting', 'Value'], [\n    ['Currency / time zone', `${cur} / ${a.time_zone || ''}`],\n    ['Auto-tagging', a.auto_tagging ? 'on' : 'off'],\n    ['Call reporting', a.call_reporting ? 'on' : 'off'],\n    ['Call conversion reporting', a.call_conversion_reporting ? 'on' : 'off'],\n    ['Conversion tracking', a.conversion_tracking_status || 'unknown'],\n    ['Enhanced conversions for leads', a.enhanced_conversions_for_leads ? 'on' : 'off'],\n    ['Test account', a.is_test_account ? 'yes' : 'no'],\n  ]),\n  '',\n  '## Campaigns (last 90 days)',\n  '',\n  table(['Campaign', 'Status', 'Bidding', 'Budget/day', 'Cost', 'Clicks', 'Conv.', 'Search IS', 'Lost IS (budget)', 'Locations', 'Schedule slots'],\n    campaigns.map((c) => [c.name, c.status, c.bidding, m(c.daily_budget), m(c.cost), c.clicks, c.conversions, pct(c.search_is), pct(c.budget_lost_is), c.locations || 'none', c.schedule_slots || '24/7'])),\n  ...((d.campaigns_without_spend || []).length ? ['', `Campaigns with no spend in the period: ${d.campaigns_without_spend.map((c) => `${c.name} (${c.status})`).join(', ')}.`] : []),\n  '',\n  '## Conversion tracking',\n  '',\n  table(['Action', 'Type', 'Status', 'Primary', 'Counting', 'Call seconds', 'Last conversion'],\n    conv.map((c) => [c.name, c.type, c.status, c.primary ? 'yes' : 'no', c.counting, c.call_seconds ?? '', c.last_conversion || 'never'])),\n  '',\n  '## Keywords',\n  '',\n  `${n(kw.count)} active keywords, average Quality Score ${kw.avg_quality_score ?? 'n/a'}, ${n(kw.low_quality)} below 5. By match type: ${Object.entries(kw.by_match_type || {}).map(([k, x]) => `${k.toLowerCase()} ${x}`).join(', ') || 'none'}.`,\n  '',\n  '## Search terms (last 90 days)',\n  '',\n  'Top terms by cost:',\n  '',\n  table(['Term', 'Cost', 'Clicks', 'Conv.', 'Already negative'], (d.search_terms_top || []).map((t) => [t.term, m(t.cost), t.clicks, t.conversions, t.negated ? 'yes' : 'no'])),\n  '',\n  'Terms with spend and no conversions (candidates for the negative list):',\n  '',\n  table(['Term', 'Cost', 'Clicks'], (d.search_terms_wasted || []).map((t) => [t.term, m(t.cost), t.clicks])),\n  '',\n  `Terms containing a person's name are not shown or stored (${n(d.search_terms_name_filtered && d.search_terms_name_filtered.rows)} daily rows, ${m(d.search_terms_name_filtered && d.search_terms_name_filtered.cost)}).`,\n  '',\n  '## Negative keywords',\n  '',\n  `Campaign level ${n(d.negatives && d.negatives.campaign_level)}, ad group level ${n(d.negatives && d.negatives.ad_group_level)}, shared lists ${n(d.negatives && d.negatives.shared_list_level)}.`,\n  '',\n  table(['Shared list', 'Keywords', 'Campaigns using it'], (d.shared_lists || []).map((l) => [l.name, l.members, l.campaigns])),\n  '',\n  '## Ads and assets',\n  '',\n  `${n(d.ads && d.ads.count)} enabled ads, ${n(d.ads && d.ads.disapproved)} disapproved, ${n(d.ads && d.ads.limited)} limited. Ad strength: ${Object.entries((d.ads && d.ads.by_strength) || {}).map(([k, x]) => `${k.toLowerCase()} ${x}`).join(', ') || 'n/a'}.`,\n  `Assets: ${Object.entries(d.assets || {}).map(([k, x]) => `${k.toLowerCase()} ${x}`).join(', ') || 'none'}.`,\n  '',\n  '## Location',\n  '',\n  `Spend on people in the area: ${m(geo.presence_cost)}. Spend on people only interested in the area: ${m(geo.interest_cost)}.`,\n  '',\n  '## Open Google recommendations',\n  '',\n  ...((d.recommendations || []).length ? d.recommendations.map((r) => `- ${String(r.type).toLowerCase().replace(/_/g, ' ')}${n(r.est_extra_conversions) ? ` (est. +${r.est_extra_conversions} conversions)` : ''}`) : ['- None.']),\n  '',\n  '## Change history (last 30 days)',\n  '',\n  Object.entries(d.changes_30d || {}).map(([k, x]) => `- ${k.toLowerCase().replace(/_/g, ' ')}: ${x}`).join('\\n') || '- No changes.',\n  '',\n].join('\\n').replace(/[–—]/g, '-');\n\nreturn [{\n  json: {\n    row: {\n      client_id: v.client_id,\n      customer_id: v.customer_id,\n      period_from: period.from,\n      period_to: period.to,\n      summary: {\n        cost: Math.round(totalCost * 100) / 100, currency: cur, clicks: totalClicks,\n        conversions: Math.round(totalConv * 100) / 100, calls: n(calls.total), calls_90s: n(calls.over_90s),\n        issues: issues.length, issues_high: issues.filter((i) => i.severity === 'high').length, issue_list: issues,\n      },\n      markdown: md,\n      status: 'draft',\n      created_by: user.user_id,\n    },\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "193eb4a7-5147-41b6-b56d-16526b1295c1",
+      "name": "Save audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3520,
+        -200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/audits",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.row) }}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      }
+    },
+    {
+      "id": "866b13fa-f0dd-44fe-861f-7f2db929d6b6",
+      "name": "Audit result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "const row = $input.first().json;\nreturn [{ json: { status: 200, body: { ok: true, id: row.id, summary: row.summary } } }];"
+      }
+    },
+    {
+      "id": "3c1fe927-7d28-42a8-bb90-593167848f86",
+      "name": "Mark reviewed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        400
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/audits?id=eq.{{ $json.audit_id }}&status=eq.draft",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'reviewed_by_rob', reviewed_by: $('Auth: check role').first().json.user.user_id, reviewed_at: new Date().toISOString() }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "7ccc757c-b01f-4abc-bdaa-16892e36a963",
+      "name": "Review result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        400
+      ],
+      "parameters": {
+        "jsCode": "const row = $input.first().json || {};\nreturn [{ json: row.id ? { status: 200, body: { ok: true } } : { status: 409, body: { error: 'Audit not found or already reviewed.' } } }];"
+      },
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Auth: read token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: read token": {
+      "main": [
+        [
+          {
+            "node": "Auth: verify token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: verify token": {
+      "main": [
+        [
+          {
+            "node": "Auth: load profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: load profile": {
+      "main": [
+        [
+          {
+            "node": "Auth: check role",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: check role": {
+      "main": [
+        [
+          {
+            "node": "Auth: allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: allowed?": {
+      "main": [
+        [
+          {
+            "node": "Validate input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: denied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate input": {
+      "main": [
+        [
+          {
+            "node": "Validate input ok?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate input ok?": {
+      "main": [
+        [
+          {
+            "node": "Generate?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate?": {
+      "main": [
+        [
+          {
+            "node": "Get account",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark reviewed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get account": {
+      "main": [
+        [
+          {
+            "node": "Check account",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check account": {
+      "main": [
+        [
+          {
+            "node": "Account ok?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Account ok?": {
+      "main": [
+        [
+          {
+            "node": "Get audit data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get audit data": {
+      "main": [
+        [
+          {
+            "node": "Write audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write audit": {
+      "main": [
+        [
+          {
+            "node": "Save audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save audit": {
+      "main": [
+        [
+          {
+            "node": "Audit result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit result": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark reviewed": {
+      "main": [
+        [
+          {
+            "node": "Review result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Review result": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

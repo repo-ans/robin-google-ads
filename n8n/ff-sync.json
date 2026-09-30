@@ -1,0 +1,2004 @@
+{
+  "name": "ff-sync",
+  "nodes": [
+    {
+      "id": "47310dff-54c4-4dc0-89bd-668b47427ab6",
+      "name": "Schedule: daily 06:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 6
+            }
+          ]
+        }
+      },
+      "notes": "Daily sync, 30-day window, in the workflow time zone (Workflow settings > Timezone)."
+    },
+    {
+      "id": "b1c1d945-2926-43fd-bae0-f29a805fe8b1",
+      "name": "Schedule: weekly Sunday 07:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                0
+              ],
+              "triggerAtHour": 7
+            }
+          ]
+        }
+      },
+      "notes": "Weekly 90-day reconcile: conversions keep arriving for up to 90 days after the click."
+    },
+    {
+      "id": "652aed74-f2ee-4e6f-b836-67e56af7c6db",
+      "name": "Trigger: daily",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { ff_trigger: 'schedule', mode: 'daily' } }];"
+      }
+    },
+    {
+      "id": "35a8bf2e-3023-4693-bbed-6de0bbbf63fa",
+      "name": "Trigger: weekly",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        200
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { ff_trigger: 'schedule_weekly', mode: 'weekly' } }];"
+      }
+    },
+    {
+      "id": "cb893564-8558-48bf-ba12-aa10d376d28c",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        400
+      ],
+      "webhookId": "ff-sync-now",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ff/sync-now",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "http://localhost:5173"
+        }
+      },
+      "notes": "Sync Now. responseMode responseNode: the Auth check block answers 401/403, otherwise 'Respond: accepted' answers 202 and the sync carries on."
+    },
+    {
+      "id": "7300de26-e41f-4d99-acdb-10f3860797fd",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Non-secret settings for ff-sync. Every secret lives in an n8n credential:\n//   FF Supabase (service role)       - Supabase node/HTTP credential\n//   FF Google OAuth refresh          - Custom Auth: client id/secret + refresh token\n//   FF Google Ads developer token    - Custom Auth: developer-token header\n//   FF OpenAI                        - AI suggestions\n//   FF Slack                         - Slack note (bot token)\n//\n// This node also works out how the run was started:\n//   - \"Trigger: daily\" / \"Trigger: weekly\" pass { ff_trigger, mode }\n//   - the Sync Now webhook passes the request (headers + body)\n// Webhook body (all optional): { customer_id: \"1234567890\", mode: \"full\" }\n//   customer_id - sync just this account; anything not 10 digits is ignored\n//   mode \"full\" - use the 90-day weekly window instead of 30 days\nconst SETTINGS = {\n  SUPABASE_URL: 'https://SET-ME.supabase.co',\n  SUPABASE_ANON_KEY: 'SET-ME', // public anon key, used only as apikey for GET /auth/v1/user\n  MCC_ID: 'SET-ME', // FF manager account, 10 digits, no dashes\n  GOOGLE_ADS_API_VERSION: 'v25', // one place to bump the API version\n  ALLOWED_ROLES: ['rob_admin', 'ff_staff'], // who may press Sync Now\n  SLACK_CHANNEL: '', // e.g. '#ff-ads'; leave empty for no Slack note\n  AI_SUGGESTIONS: true, // proactive Campaign Assistant suggestions after each sync\n};\n\nconst src = $input.first().json || {};\nconst fromWebhook = Boolean(src.headers);\nconst body = fromWebhook && src.body && typeof src.body === 'object' ? src.body : {};\n\nlet onlyCustomerId = null;\nif (typeof body.customer_id === 'string' || typeof body.customer_id === 'number') {\n  const digits = String(body.customer_id).replace(/-/g, '');\n  if (/^[0-9]{10}$/.test(digits)) onlyCustomerId = digits;\n}\n\nlet trigger = 'schedule';\nlet mode = 'daily';\nif (fromWebhook) {\n  trigger = 'manual';\n  mode = body.mode === 'full' ? 'weekly' : 'daily';\n} else if (src.ff_trigger === 'schedule_weekly') {\n  trigger = 'schedule_weekly';\n  mode = 'weekly';\n}\n\nconst mcc = String(SETTINGS.MCC_ID).replace(/-/g, '');\n\nreturn [\n  {\n    json: {\n      ...SETTINGS,\n      MCC_ID: /^[0-9]{10}$/.test(mcc) ? mcc : '',\n      trigger,\n      mode,\n      only_customer_id: onlyCustomerId,\n      started_at: new Date().toISOString(),\n    },\n  },\n];\n"
+      },
+      "notes": "Set SUPABASE_URL, SUPABASE_ANON_KEY, MCC_ID (and SLACK_CHANNEL if wanted) after import."
+    },
+    {
+      "id": "ad2bdae6-9e68-444c-9262-bbe00cef9264",
+      "name": "Manual run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "f2422599-00b5-4c0c-ab1c-f120f04013ee",
+              "leftValue": "={{ $('Config').first().json.trigger === 'manual' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "38aff9c5-76a3-43d7-b9d1-da0386453641",
+      "parameters": {
+        "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
+      },
+      "name": "Auth: read token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        400
+      ],
+      "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
+    },
+    {
+      "id": "a2abaee1-0d2c-41cd-9da2-3bf73b7dbff7",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Config').first().json.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token || 'missing' }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: verify token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        400
+      ],
+      "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
+    },
+    {
+      "id": "45edd689-4cd2-4028-9030-87fa55aa26c1",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "=eq.{{ (($json.statusCode === 200 && $json.body && /^[0-9a-f-]{36}$/.test($json.body.id)) ? $json.body.id : '00000000-0000-0000-0000-000000000000') }}"
+            },
+            {
+              "name": "select",
+              "value": "user_id,email,role,client_id,disabled"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: load profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        400
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
+    },
+    {
+      "id": "8a7bc5f5-5fe2-4040-b082-621975e4353e",
+      "parameters": {
+        "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
+      },
+      "name": "Auth: check role",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        400
+      ],
+      "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
+    },
+    {
+      "id": "4e7a024d-d2ad-4c2e-918d-9bf1a532c233",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "a1b2c3d4-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Auth: allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        400
+      ]
+    },
+    {
+      "id": "31f9de66-3e6a-498f-908e-d1211ed73006",
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "name": "Respond: denied",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        600
+      ],
+      "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
+    },
+    {
+      "id": "01f9d2bc-cbc9-4229-9bab-05b2c564b8f3",
+      "name": "Respond: accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'started', message: 'Sync started. The dashboard updates when it finishes.' }) }}",
+        "options": {
+          "responseCode": 202
+        }
+      }
+    },
+    {
+      "id": "079b1036-41d6-4885-b0fc-9459f6053580",
+      "name": "Start sync run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/sync_runs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ trigger: $('Config').first().json.trigger, requested_by: $('Config').first().json.trigger === 'manual' ? $('Auth: check role').first().json.user.user_id : null }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      }
+    },
+    {
+      "id": "18d3bb9d-1aad-4f58-9270-5684737647a6",
+      "name": "Refresh Google token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "",
+          "name": "FF Google OAuth refresh"
+        }
+      },
+      "notes": "OAuth refresh. client_id, client_secret and refresh_token come from the Custom Auth credential 'FF Google OAuth refresh' - never from code or Supabase."
+    },
+    {
+      "id": "cbfd8a27-686b-4876-890c-1c9574b9ba4d",
+      "name": "Get MCC accounts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://googleads.googleapis.com/{{ $('Config').first().json.GOOGLE_ADS_API_VERSION }}/customers/{{ $('Config').first().json.MCC_ID || '0000000000' }}/googleAds:searchStream",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify(Object.assign({ \"Authorization\": \"Bearer \" + ($('Refresh Google token').first().json.access_token || 'missing'), \"Content-Type\": \"application/json\" }, $('Config').first().json.MCC_ID ? { \"login-customer-id\": $('Config').first().json.MCC_ID } : {})) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: \"SELECT customer_client.id, customer_client.descriptive_name, customer_client.currency_code, customer_client.time_zone, customer_client.status, customer_client.manager, customer_client.level, customer_client.test_account FROM customer_client WHERE customer_client.manager = false\" }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "",
+          "name": "FF Google Ads developer token"
+        }
+      },
+      "notes": "Asks the MCC which client accounts it manages. Read only."
+    },
+    {
+      "id": "802dd9dd-3ba7-4603-a6e5-879355c3f3ac",
+      "name": "Build account upserts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/gads.js (included by scripts/build-n8n.mjs) -------------------\n// Reading Google Ads REST responses from an HTTP Request node that has\n// \"Full response\" on (and usually \"Never error\"), with the body as text or JSON.\n\nfunction gadsBody(r) {\n  let body = r && (r.body !== undefined ? r.body : r.data);\n  if (typeof body === 'string') {\n    try {\n      body = body ? JSON.parse(body) : null;\n    } catch (e) {\n      return { __unparsable: true };\n    }\n  }\n  return body;\n}\n\n// Human-readable error from a failed call, or null when it succeeded.\nfunction gadsError(r) {\n  if (!r) return 'no response';\n  if (r.error && r.statusCode === undefined) return String(r.error.message || JSON.stringify(r.error)).slice(0, 500);\n  if (r.statusCode >= 200 && r.statusCode < 300) return null;\n  const body = gadsBody(r);\n  const first = Array.isArray(body) ? body[0] : body;\n  const err = first && first.error;\n  const detail = err && err.details && err.details[0] && err.details[0].errors && err.details[0].errors[0];\n  const code = detail && detail.errorCode ? ` [${Object.values(detail.errorCode).join(',')}]` : '';\n  return `${r.statusCode} ${(detail && detail.message) || (err && err.message) || 'error'}${code}`.slice(0, 500);\n}\n\n// searchStream / search -> { rows } or { error }.\nfunction parseStream(r) {\n  const error = gadsError(r);\n  if (error) return { error };\n  const body = gadsBody(r);\n  if (body && body.__unparsable) return { error: 'response was not JSON' };\n  const rows = [];\n  for (const batch of Array.isArray(body) ? body : [body]) {\n    for (const row of (batch && batch.results) || []) rows.push(row);\n  }\n  return { rows };\n}\n// ---- end shared/gads.js -----------------------------------------------------\n\n// Turns the MCC's customer_client list into ad_accounts rows.\n// New accounts land with client_id = null (\"Unassigned\"); the upsert never\n// sends client_id, so existing assignments are kept. Replaces the reference's\n// fake placeholder client rows for discovered accounts.\nconst cfg = $('Config').first().json;\nconst res = $input.first().json || {};\nconst now = new Date().toISOString();\n\nif (!cfg.MCC_ID) {\n  return [{ json: { rows: [], mcc_error: 'MCC_ID is not set in Config' } }];\n}\n\nconst parsed = parseStream(res);\nif (parsed.error) {\n  return [{ json: { rows: [], mcc_error: parsed.error } }];\n}\n\nconst seen = new Set();\nconst rows = [];\nfor (const r of parsed.rows) {\n  const c = r.customerClient || {};\n  const id = c.id !== undefined ? String(c.id) : null;\n  if (!id || !/^[0-9]{10}$/.test(id) || seen.has(id) || id === cfg.MCC_ID) continue;\n  seen.add(id);\n  rows.push({\n    customer_id: id,\n    login_customer_id: cfg.MCC_ID,\n    descriptive_name: c.descriptiveName || null,\n    currency_code: c.currencyCode || null,\n    time_zone: c.timeZone || null,\n    status: c.status || null,\n    is_manager: Boolean(c.manager),\n    is_test_account: Boolean(c.testAccount),\n    synced_at: now,\n  });\n}\n\nreturn [{ json: { rows, mcc_error: null } }];\n"
+      }
+    },
+    {
+      "id": "88d9ab42-c2e8-4e78-a1d9-fcd6b37922c8",
+      "name": "Upsert accounts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/ad_accounts?on_conflict=customer_id",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.rows) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "notes": "Upsert on customer_id. client_id is never sent, so assignments by FF staff are kept. New accounts land as Unassigned."
+    },
+    {
+      "id": "86762df4-d7df-4f75-81c2-d14018959e1f",
+      "name": "Get accounts to sync",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/ad_accounts?select=customer_id,login_customer_id,time_zone,first_synced_at,clients(towns,own_brand_terms,competitor_terms)&sync_enabled=eq.true&is_manager=eq.false&or=(status.is.null,status.eq.ENABLED)&order=customer_id{{ $('Config').first().json.only_customer_id ? '&customer_id=eq.' + $('Config').first().json.only_customer_id : '' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "notes": "alwaysOutputData: an empty table must not halt the workflow (reference lesson)."
+    },
+    {
+      "id": "b7e2bf77-a8d2-4a3c-ba16-262001f577c0",
+      "name": "Prepare account list",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// One item per account to sync. \"Get accounts to sync\" has alwaysOutputData on,\n// so an empty table arrives as one empty item - filter it out here and emit a\n// single { none: true } item instead, which \"Any accounts?\" routes past the loop.\nconst accounts = $input\n  .all()\n  .map((i) => i.json)\n  .filter((a) => a && /^[0-9]{10}$/.test(String(a.customer_id || '')));\n\nif (accounts.length === 0) return [{ json: { none: true } }];\n\nreturn accounts.map((a) => ({\n  json: {\n    customer_id: String(a.customer_id),\n    login_customer_id: a.login_customer_id ? String(a.login_customer_id) : null,\n    time_zone: a.time_zone || 'UTC',\n    first_synced_at: a.first_synced_at || null,\n    towns: (a.clients && a.clients.towns) || [],\n    own_brand_terms: (a.clients && a.clients.own_brand_terms) || [],\n    competitor_terms: (a.clients && a.clients.competitor_terms) || [],\n  },\n}));\n"
+      }
+    },
+    {
+      "id": "56044001-1332-45d7-9bc2-31b6c7b0a815",
+      "name": "Any accounts?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "a8c98849-1ff0-4a71-b707-c7a276ffbf7a",
+              "leftValue": "={{ !$json.none }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "7b4f8e2f-ee56-4f45-ad10-89b3f3975347",
+      "name": "Loop over accounts",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        3960,
+        200
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "notes": "One account per pass, so $('Loop over accounts').first() is always the current account. One account failing does not stop the others."
+    },
+    {
+      "id": "a85f073b-9eb9-4e12-80a8-1999ae1d8e05",
+      "name": "Account: refresh token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3960,
+        600
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "",
+          "name": "FF Google OAuth refresh"
+        }
+      },
+      "notes": "OAuth refresh. client_id, client_secret and refresh_token come from the Custom Auth credential 'FF Google OAuth refresh' - never from code or Supabase."
+    },
+    {
+      "id": "5f49d06d-2e5c-4312-8731-5bed12f3e4bd",
+      "name": "Account: build queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        600
+      ],
+      "parameters": {
+        "jsCode": "// One item per GAQL query for the current account (PLAN.md section 6).\n// \"Google Ads search\" runs once per item; \"Map and plan writes\" matches each\n// response back to its query with itemMatching(), never by position.\n//\n// Windows (PLAN.md 5.2), in the account's own time zone, ending yesterday:\n//   first sync      - 365 days campaign-level, 90 days detail\n//   weekly / \"full\" - 90 days\n//   daily           - 30 days\nconst cfg = $('Config').first().json;\nconst run = $('Start sync run').first().json;\nconst account = $('Loop over accounts').first().json;\n\nconst tz = account.time_zone || 'UTC';\nfunction todayIn(zone) {\n  try {\n    return new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());\n  } catch (e) {\n    return new Date().toISOString().slice(0, 10);\n  }\n}\nfunction addDays(day, n) {\n  const d = new Date(`${day}T00:00:00Z`);\n  d.setUTCDate(d.getUTCDate() + n);\n  return d.toISOString().slice(0, 10);\n}\n\nconst today = todayIn(tz);\nconst to = addDays(today, -1);\nconst firstSync = !account.first_synced_at;\nconst detailDays = firstSync || cfg.mode === 'weekly' ? 90 : 30;\nconst campaignDays = firstSync ? 365 : detailDays;\nconst fromCampaign = addDays(today, -campaignDays);\nconst fromDetail = addDays(today, -detailDays);\n// change_event only allows the last 30 days.\nconst fromChanges = addDays(today, firstSync ? -29 : -2);\n\nconst between = (from) => `segments.date BETWEEN '${from}' AND '${to}'`;\n\nconst Q = {\n  customer: `SELECT customer.id, customer.descriptive_name, customer.currency_code, customer.time_zone,\n    customer.auto_tagging_enabled, customer.manager, customer.test_account,\n    customer.call_reporting_setting.call_reporting_enabled,\n    customer.call_reporting_setting.call_conversion_reporting_enabled,\n    customer.call_reporting_setting.call_conversion_action,\n    customer.conversion_tracking_setting.conversion_tracking_status,\n    customer.conversion_tracking_setting.enhanced_conversions_for_leads_enabled\n    FROM customer`,\n\n  campaigns: `SELECT campaign.id, campaign.name, campaign.status, campaign.serving_status,\n    campaign.primary_status, campaign.primary_status_reasons,\n    campaign.advertising_channel_type, campaign.advertising_channel_sub_type,\n    campaign.bidding_strategy_type, campaign.target_cpa.target_cpa_micros,\n    campaign.maximize_conversions.target_cpa_micros, campaign.target_roas.target_roas,\n    campaign.maximize_conversion_value.target_roas,\n    campaign.network_settings.target_google_search, campaign.network_settings.target_search_network,\n    campaign.network_settings.target_content_network,\n    campaign.geo_target_type_setting.positive_geo_target_type,\n    campaign.geo_target_type_setting.negative_geo_target_type,\n    campaign_budget.id, campaign_budget.amount_micros, campaign_budget.delivery_method,\n    campaign_budget.explicitly_shared\n    FROM campaign`,\n\n  campaign_criteria: `SELECT campaign.id, campaign_criterion.criterion_id, campaign_criterion.type,\n    campaign_criterion.negative, campaign_criterion.status, campaign_criterion.bid_modifier,\n    campaign_criterion.location.geo_target_constant,\n    campaign_criterion.proximity.radius, campaign_criterion.proximity.radius_units,\n    campaign_criterion.language.language_constant,\n    campaign_criterion.ad_schedule.day_of_week,\n    campaign_criterion.ad_schedule.start_hour, campaign_criterion.ad_schedule.start_minute,\n    campaign_criterion.ad_schedule.end_hour, campaign_criterion.ad_schedule.end_minute,\n    campaign_criterion.device.type,\n    campaign_criterion.keyword.text, campaign_criterion.keyword.match_type\n    FROM campaign_criterion\n    WHERE campaign_criterion.type IN ('LOCATION','PROXIMITY','LANGUAGE','AD_SCHEDULE','DEVICE','KEYWORD')\n      AND campaign_criterion.status != 'REMOVED' AND campaign.status != 'REMOVED'`,\n\n  ad_groups: `SELECT campaign.id, ad_group.id, ad_group.name, ad_group.status, ad_group.type,\n    ad_group.cpc_bid_micros\n    FROM ad_group WHERE ad_group.status != 'REMOVED'`,\n\n  keywords: `SELECT campaign.id, ad_group.id, ad_group_criterion.criterion_id, ad_group_criterion.negative,\n    ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type,\n    ad_group_criterion.status, ad_group_criterion.system_serving_status,\n    ad_group_criterion.approval_status, ad_group_criterion.cpc_bid_micros,\n    ad_group_criterion.effective_cpc_bid_micros, ad_group_criterion.final_urls,\n    ad_group_criterion.quality_info.quality_score,\n    ad_group_criterion.quality_info.creative_quality_score,\n    ad_group_criterion.quality_info.post_click_quality_score,\n    ad_group_criterion.quality_info.search_predicted_ctr,\n    ad_group_criterion.position_estimates.first_page_cpc_micros,\n    ad_group_criterion.position_estimates.top_of_page_cpc_micros,\n    ad_group_criterion.position_estimates.first_position_cpc_micros\n    FROM ad_group_criterion\n    WHERE ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.status != 'REMOVED'`,\n\n  shared_sets: `SELECT shared_set.id, shared_set.name, shared_set.type, shared_set.status, shared_set.member_count\n    FROM shared_set WHERE shared_set.type = 'NEGATIVE_KEYWORDS' AND shared_set.status = 'ENABLED'`,\n\n  shared_criteria: `SELECT shared_set.id, shared_criterion.criterion_id, shared_criterion.keyword.text,\n    shared_criterion.keyword.match_type\n    FROM shared_criterion\n    WHERE shared_set.type = 'NEGATIVE_KEYWORDS' AND shared_set.status = 'ENABLED'\n      AND shared_criterion.type = 'KEYWORD'`,\n\n  campaign_shared_sets: `SELECT campaign.id, shared_set.id, campaign_shared_set.status\n    FROM campaign_shared_set\n    WHERE shared_set.type = 'NEGATIVE_KEYWORDS' AND campaign_shared_set.status != 'REMOVED'`,\n\n  ads: `SELECT campaign.id, ad_group.id, ad_group_ad.ad.id, ad_group_ad.ad.type, ad_group_ad.status,\n    ad_group_ad.ad_strength, ad_group_ad.ad.final_urls,\n    ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions,\n    ad_group_ad.ad.responsive_search_ad.path1, ad_group_ad.ad.responsive_search_ad.path2,\n    ad_group_ad.policy_summary.approval_status, ad_group_ad.policy_summary.review_status,\n    ad_group_ad.policy_summary.policy_topic_entries\n    FROM ad_group_ad WHERE ad_group_ad.status != 'REMOVED'`,\n\n  asset_labels: `SELECT campaign.id, ad_group.id, ad_group_ad_asset_view.ad_group_ad, asset.id,\n    asset.text_asset.text, ad_group_ad_asset_view.field_type, ad_group_ad_asset_view.performance_label,\n    ad_group_ad_asset_view.pinned_field, ad_group_ad_asset_view.enabled,\n    metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions\n    FROM ad_group_ad_asset_view\n    WHERE segments.date DURING LAST_30_DAYS\n      AND ad_group_ad_asset_view.field_type IN ('HEADLINE','DESCRIPTION')`,\n\n  assets_account: `SELECT customer_asset.field_type, customer_asset.status, customer_asset.primary_status,\n    asset.id, asset.type, asset.name, asset.final_urls,\n    asset.call_asset.phone_number, asset.call_asset.call_conversion_reporting_state,\n    asset.call_asset.call_conversion_action,\n    asset.sitelink_asset.link_text, asset.sitelink_asset.description1, asset.sitelink_asset.description2,\n    asset.callout_asset.callout_text,\n    asset.structured_snippet_asset.header, asset.structured_snippet_asset.values\n    FROM customer_asset\n    WHERE customer_asset.field_type IN ('CALL','SITELINK','CALLOUT','STRUCTURED_SNIPPET')\n      AND customer_asset.status != 'REMOVED'`,\n\n  assets_campaign: `SELECT campaign.id, campaign_asset.field_type, campaign_asset.status, campaign_asset.primary_status,\n    asset.id, asset.type, asset.name, asset.final_urls,\n    asset.call_asset.phone_number, asset.call_asset.call_conversion_reporting_state,\n    asset.call_asset.call_conversion_action,\n    asset.sitelink_asset.link_text, asset.sitelink_asset.description1, asset.sitelink_asset.description2,\n    asset.callout_asset.callout_text,\n    asset.structured_snippet_asset.header, asset.structured_snippet_asset.values\n    FROM campaign_asset\n    WHERE campaign_asset.field_type IN ('CALL','SITELINK','CALLOUT','STRUCTURED_SNIPPET')\n      AND campaign_asset.status != 'REMOVED'`,\n\n  assets_ad_group: `SELECT campaign.id, ad_group.id, ad_group_asset.field_type, ad_group_asset.status,\n    ad_group_asset.primary_status,\n    asset.id, asset.type, asset.name, asset.final_urls,\n    asset.call_asset.phone_number, asset.call_asset.call_conversion_reporting_state,\n    asset.call_asset.call_conversion_action,\n    asset.sitelink_asset.link_text, asset.sitelink_asset.description1, asset.sitelink_asset.description2,\n    asset.callout_asset.callout_text,\n    asset.structured_snippet_asset.header, asset.structured_snippet_asset.values\n    FROM ad_group_asset\n    WHERE ad_group_asset.field_type IN ('CALL','SITELINK','CALLOUT','STRUCTURED_SNIPPET')\n      AND ad_group_asset.status != 'REMOVED'`,\n\n  conversion_actions: `SELECT conversion_action.id, conversion_action.name, conversion_action.category,\n    conversion_action.type, conversion_action.origin, conversion_action.status,\n    conversion_action.counting_type, conversion_action.primary_for_goal,\n    conversion_action.include_in_conversions_metric,\n    conversion_action.value_settings.default_value, conversion_action.value_settings.always_use_default_value,\n    conversion_action.click_through_lookback_window_days,\n    conversion_action.phone_call_duration_seconds,\n    conversion_action.attribution_model_settings.attribution_model\n    FROM conversion_action WHERE conversion_action.status != 'REMOVED'`,\n\n  recommendations: `SELECT recommendation.resource_name, recommendation.type, recommendation.campaign,\n    recommendation.ad_group, recommendation.dismissed, recommendation.impact\n    FROM recommendation`,\n\n  change_events: `SELECT change_event.resource_name, change_event.change_date_time,\n    change_event.change_resource_type, change_event.change_resource_name, change_event.client_type,\n    change_event.user_email, change_event.resource_change_operation, change_event.changed_fields,\n    change_event.campaign, change_event.ad_group\n    FROM change_event\n    WHERE change_event.change_date_time >= '${fromChanges} 00:00:00'\n      AND change_event.change_date_time <= '${today} 23:59:59'\n    ORDER BY change_event.change_date_time DESC\n    LIMIT 10000`,\n\n  campaign_daily: `SELECT campaign.id, segments.date,\n    metrics.impressions, metrics.clicks, metrics.cost_micros,\n    metrics.conversions, metrics.conversions_value,\n    metrics.all_conversions, metrics.all_conversions_value, metrics.view_through_conversions,\n    metrics.phone_calls, metrics.phone_impressions,\n    metrics.search_impression_share, metrics.search_budget_lost_impression_share,\n    metrics.search_rank_lost_impression_share, metrics.search_top_impression_share,\n    metrics.search_absolute_top_impression_share,\n    metrics.top_impression_percentage, metrics.absolute_top_impression_percentage\n    FROM campaign WHERE ${between(fromCampaign)}`,\n\n  ad_group_daily: `SELECT campaign.id, ad_group.id, segments.date,\n    metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions,\n    metrics.conversions_value, metrics.all_conversions, metrics.all_conversions_value,\n    metrics.phone_calls\n    FROM ad_group WHERE ${between(fromCampaign)}`,\n\n  keyword_daily: `SELECT campaign.id, ad_group.id, ad_group_criterion.criterion_id, segments.date,\n    metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions,\n    metrics.conversions_value, metrics.all_conversions, metrics.search_impression_share\n    FROM keyword_view WHERE ${between(fromDetail)}`,\n\n  search_terms: `SELECT campaign.id, ad_group.id, search_term_view.search_term, search_term_view.status,\n    segments.keyword.ad_group_criterion, segments.keyword.info.text, segments.keyword.info.match_type,\n    segments.search_term_match_type, segments.date,\n    metrics.impressions, metrics.clicks, metrics.cost_micros,\n    metrics.conversions, metrics.conversions_value, metrics.all_conversions\n    FROM search_term_view WHERE ${between(fromDetail)}`,\n\n  ad_daily: `SELECT campaign.id, ad_group.id, ad_group_ad.ad.id, segments.date,\n    metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value\n    FROM ad_group_ad WHERE ${between(fromDetail)}`,\n\n  asset_daily: `SELECT campaign.id, asset.id, campaign_asset.field_type, segments.date,\n    metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions\n    FROM campaign_asset\n    WHERE ${between(fromDetail)} AND campaign_asset.field_type IN ('CALL','SITELINK','CALLOUT')`,\n\n  conversion_daily: `SELECT campaign.id, segments.conversion_action, segments.date,\n    metrics.conversions, metrics.conversions_value, metrics.all_conversions, metrics.all_conversions_value\n    FROM campaign WHERE ${between(fromCampaign)}`,\n\n  hourly: `SELECT campaign.id, segments.date, segments.hour, segments.day_of_week,\n    metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.phone_calls\n    FROM campaign WHERE ${between(fromDetail)}`,\n\n  device: `SELECT campaign.id, segments.date, segments.device,\n    metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value\n    FROM campaign WHERE ${between(fromDetail)}`,\n\n  geo: `SELECT campaign.id, segments.date, geographic_view.location_type, geographic_view.country_criterion_id,\n    segments.geo_target_most_specific_location,\n    metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions\n    FROM geographic_view WHERE ${between(fromDetail)}`,\n\n  // caller_area_code and caller_country_code are deliberately not selected (hard rule 4).\n  calls: `SELECT call_view.resource_name, campaign.id, ad_group.id,\n    call_view.start_call_date_time, call_view.end_call_date_time, call_view.call_duration_seconds,\n    call_view.call_status, call_view.type, call_view.call_tracking_display_location\n    FROM call_view\n    WHERE call_view.start_call_date_time >= '${fromDetail} 00:00:00'\n      AND call_view.start_call_date_time <= '${to} 23:59:59'`,\n};\n\nconst passAt = new Date().toISOString();\n\nreturn Object.entries(Q).map(([name, gaql]) => ({\n  json: {\n    query_name: name,\n    gaql: gaql.replace(/\\s+/g, ' ').trim(),\n    customer_id: account.customer_id,\n    login_customer_id: account.login_customer_id,\n    time_zone: tz,\n    sync_run_id: run.id,\n    // Every row written in this pass carries this timestamp. Structure rows\n    // older than it afterwards are soft-removed (removed_at), never deleted.\n    pass_at: passAt,\n    first_sync: firstSync,\n    window: { from_campaign: fromCampaign, from_detail: fromDetail, to },\n  },\n}));\n"
+      }
+    },
+    {
+      "id": "f167a2b1-6111-466a-a7f7-d5465cdf4550",
+      "name": "Google Ads search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4400,
+        600
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://googleads.googleapis.com/{{ $('Config').first().json.GOOGLE_ADS_API_VERSION }}/customers/{{ $json.customer_id }}/googleAds:searchStream",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify(Object.assign({ \"Authorization\": \"Bearer \" + ($('Account: refresh token').first().json.access_token || 'missing'), \"Content-Type\": \"application/json\" }, $json.login_customer_id ? { \"login-customer-id\": $json.login_customer_id } : {})) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $json.gaql }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 250
+            }
+          },
+          "timeout": 300000
+        }
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "",
+          "name": "FF Google Ads developer token"
+        }
+      },
+      "notes": "One searchStream call per query, 250 ms apart. Text response so n8n does not split the JSON array. Read only.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "c38ade01-012d-44a2-8f25-6ea5d124552e",
+      "name": "Map and plan writes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4620,
+        600
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/names.js (included by scripts/build-n8n.mjs) ------------------\n// Hard rule 4: no family or deceased names in columns, logs or AI prompts.\n// PLAN.md 5.4 - the exact rules still need Rob's sign-off.\n//\n// makeNameFilters(extraAllowPhrases) returns:\n//   filterTerm(raw)   -> { stored, filtered } for search terms: a name-bearing\n//                        term becomes \"[name removed - <intent>]\"\n//   redactNames(text) -> free text (messages, chat) with name words replaced\n//                        by \"[name]\"\n// A term is name-bearing when it has an obituary/death-notice phrase, a common\n// first name that is not an allowed word, or a common surname with no\n// funeral-business word next to it (\"smith funeral home\" is a business and is\n// kept; \"john smith\" is not). Removing a harmless word is the safe direction.\n\nconst NAME_INTENT = [\n  ['obituary', 'obituary'], ['obituaries', 'obituary'], ['obit', 'obituary'], ['obits', 'obituary'],\n  ['passed away', 'death notice'], ['death notice', 'death notice'], ['death notices', 'death notice'],\n  ['in loving memory', 'memorial'], ['celebration of life for', 'memorial'], ['memorial for', 'memorial'],\n  ['service for', 'service'], ['services for', 'service'], ['visitation for', 'service'], ['funeral for', 'service'],\n  ['condolences', 'obituary'], ['guestbook', 'obituary'], ['guest book', 'obituary'],\n];\nconst FIRST_NAMES = new Set(('james john robert michael william david richard joseph thomas charles christopher daniel matthew anthony ' +\n  'donald steven paul andrew joshua kenneth kevin brian george timothy ronald edward jason jeffrey ryan jacob gary nicholas eric ' +\n  'jonathan stephen larry justin scott brandon benjamin samuel gregory alexander frank patrick raymond dennis tyler aaron jose adam ' +\n  'nathan henry douglas zachary peter kyle ethan walter noah jeremy christian keith roger terry gerald harold sean austin carl arthur ' +\n  'lawrence dylan jesse jordan bryan billy joe bruce gabriel logan albert willie alan juan wayne elijah randy roy vincent ralph eugene ' +\n  'russell bobby louis philip johnny howard fred earl jimmy leonard stanley norman lloyd clarence herbert ernest melvin francis ' +\n  'mary patricia jennifer linda elizabeth barbara susan jessica sarah karen lisa nancy betty margaret sandra ashley kimberly emily donna ' +\n  'michelle carol amanda dorothy melissa deborah stephanie rebecca sharon laura cynthia kathleen amy angela shirley anna brenda pamela ' +\n  'emma nicole helen samantha katherine christine debra rachel carolyn janet catherine maria heather diane julie joyce victoria kelly ' +\n  'christina lauren joan evelyn olivia judith megan cheryl martha andrea frances hannah jacqueline gloria teresa kathryn sara janice ' +\n  'jean alice madison doris abigail julia judy beverly denise marilyn danielle theresa sophia marie diana brittany natalie isabella ' +\n  'charlotte irene alexis kayla lori tiffany gladys wanda mildred dolores edna ethel lillian thelma bernice norma florence ' +\n  'eleanor agnes louise ruth anne annie marjorie esther virginia phyllis lois geraldine loretta darlene connie peggy ' +\n  'mohammed muhammad ahmed ali fatima priya raj wei li chen nguyen').split(/\\s+/));\nconst SURNAMES = new Set(('smith johnson williams jones garcia miller davis rodriguez martinez hernandez lopez gonzalez wilson anderson ' +\n  'thomas taylor moore jackson martin lee perez thompson harris sanchez clark ramirez lewis robinson walker allen wright scott torres ' +\n  'nguyen flores adams nelson baker hall rivera campbell mitchell carter roberts gomez phillips evans turner diaz parker cruz edwards ' +\n  'collins reyes stewart morris morales murphy cook rogers gutierrez ortiz morgan cooper peterson bailey reed kelly howard ramos kim ' +\n  'cox ward richardson watson brooks chavez wood james bennett gray mendoza ruiz hughes alvarez castillo sanders patel myers long ross ' +\n  'foster jimenez powell jenkins perry russell sullivan bell coleman butler henderson barnes gonzales fisher vasquez simmons romero ' +\n  'jordan patterson alexander hamilton graham reynolds griffin wallace moreno west cole hayes bryant herrera gibson ellis tran medina ' +\n  'aguilar stevens murray ford castro marshall owens harrison fernandez mcdonald woods washington kennedy wells vargas henry chen ' +\n  'freeman webb tucker guzman burns crawford olson simpson porter hunter gordon mendez silva shaw snyder mason dixon munoz hunt hicks ' +\n  'holmes palmer wagner black robertson boyd rose stone salazar fox warren mills meyer rice schmidt garza daniels ferguson nichols ' +\n  'stephens soto weaver ryan gardner payne grant dunn kelley spencer hawkins arnold pierce hansen peters santos hart bradley knight ' +\n  'elliott cunningham duncan armstrong hudson carroll lane riley andrews ray berry perkins hoffman johnston matthews pena richards ' +\n  'willis carpenter lawrence sandoval').split(/\\s+/));\n// Words that are also names but common in funeral searches, or are places.\nconst NAME_ALLOW = new Set(('home homes funeral funerals cremation cremations crematory crematorium mortuary chapel chapels cemetery ' +\n  'burial burials memorial memorials service services casket caskets urn urns direct cost costs price prices near me the and of for ' +\n  'in with how much what is a to plan plans preplan pre planning prepaid prearranged arrangements cheap affordable best top local ' +\n  'grace hope faith joy rose may june april august summer dawn lily ivy pearl ruby crystal amber holly will mark long hall bell stone ' +\n  'wood woods hill park ward west north south east wells love price cook church king young green white brown black gray grey rice ' +\n  'lane grant hunt fox shaw reed bailey mason hunter parker cooper carter brooks gardner ford washington jordan virginia ' +\n  'florence charlotte victoria madison austin eugene lawrence augusta marshall franklin lincoln jackson hamilton warren').split(/\\s+/));\nconst NAME_BUSINESS = new Set('funeral funerals home homes mortuary chapel chapels cremation cremations crematory crematorium cemetery memorial'.split(' '));\n\nfunction makeNameFilters(extraAllowPhrases) {\n  const extra = new Set();\n  for (const phrase of extraAllowPhrases || []) {\n    for (const w of String(phrase).toLowerCase().split(/[^a-z0-9']+/)) if (w) extra.add(w);\n  }\n  const allowed = (w) => NAME_ALLOW.has(w) || extra.has(w);\n  // \"smith's\" / \"smiths'\" -> \"smith\", so possessives do not slip through.\n  const base = (w) => w.replace(/'s$|'$/, '');\n  const isName = (w) => (FIRST_NAMES.has(base(w)) || SURNAMES.has(base(w))) && !allowed(base(w));\n\n  function filterTerm(raw) {\n    const term = String(raw || '').toLowerCase().replace(/\\s+/g, ' ').trim();\n    for (const [phrase, intent] of NAME_INTENT) {\n      if (` ${term} `.includes(` ${phrase} `)) return { stored: `[name removed - ${intent}]`, filtered: true };\n    }\n    const words = term.split(/[^a-z0-9']+/).filter(Boolean);\n    const hasBusiness = words.some((w) => NAME_BUSINESS.has(w));\n    if (words.some((w) => FIRST_NAMES.has(base(w)) && !allowed(base(w)))) return { stored: '[name removed - name]', filtered: true };\n    if (!hasBusiness && words.some((w) => SURNAMES.has(base(w)) && !allowed(base(w)))) return { stored: '[name removed - name]', filtered: true };\n    return { stored: term, filtered: false };\n  }\n\n  function redactNames(text) {\n    return String(text || '').replace(/[A-Za-z][A-Za-z']*/g, (word) => (isName(word.toLowerCase()) ? '[name]' : word));\n  }\n\n  return { filterTerm, redactNames };\n}\n// ---- end shared/names.js ----------------------------------------------------\n\n// ---- shared/gads.js (included by scripts/build-n8n.mjs) -------------------\n// Reading Google Ads REST responses from an HTTP Request node that has\n// \"Full response\" on (and usually \"Never error\"), with the body as text or JSON.\n\nfunction gadsBody(r) {\n  let body = r && (r.body !== undefined ? r.body : r.data);\n  if (typeof body === 'string') {\n    try {\n      body = body ? JSON.parse(body) : null;\n    } catch (e) {\n      return { __unparsable: true };\n    }\n  }\n  return body;\n}\n\n// Human-readable error from a failed call, or null when it succeeded.\nfunction gadsError(r) {\n  if (!r) return 'no response';\n  if (r.error && r.statusCode === undefined) return String(r.error.message || JSON.stringify(r.error)).slice(0, 500);\n  if (r.statusCode >= 200 && r.statusCode < 300) return null;\n  const body = gadsBody(r);\n  const first = Array.isArray(body) ? body[0] : body;\n  const err = first && first.error;\n  const detail = err && err.details && err.details[0] && err.details[0].errors && err.details[0].errors[0];\n  const code = detail && detail.errorCode ? ` [${Object.values(detail.errorCode).join(',')}]` : '';\n  return `${r.statusCode} ${(detail && detail.message) || (err && err.message) || 'error'}${code}`.slice(0, 500);\n}\n\n// searchStream / search -> { rows } or { error }.\nfunction parseStream(r) {\n  const error = gadsError(r);\n  if (error) return { error };\n  const body = gadsBody(r);\n  if (body && body.__unparsable) return { error: 'response was not JSON' };\n  const rows = [];\n  for (const batch of Array.isArray(body) ? body : [body]) {\n    for (const row of (batch && batch.results) || []) rows.push(row);\n  }\n  return { rows };\n}\n// ---- end shared/gads.js -----------------------------------------------------\n\n// Turns every Google Ads response for this account into Supabase upserts.\n//\n// Input: one item per query from \"Google Ads search\" (HTTP, full response,\n// text body). Each is matched to its query with itemMatching(i) - the paired\n// item link from \"Account: build queries\" through the HTTP node - never by\n// position (reference lesson: index pairing broke across sources).\n//\n// Output, in this order:\n//   item 0 - start marker: upserts sync_run_accounts (status 'partial' until\n//            \"Finish account\" overwrites it) and carries query_results.\n//   items  - { table, on_conflict, rows } chunks of up to 500 rows.\n// Every item is written by \"Write rows\" with a PostgREST upsert\n// (on_conflict + resolution=merge-duplicates). No delete-then-create.\n//\n// Rules applied here:\n//   - search terms pass the name filter before storage (hard rule 4, PLAN 5.4,\n//     rules in shared/names.js)\n//   - rows in one request all have the same keys (PostgREST requirement)\n//   - duplicate natural keys inside a batch are merged (metrics summed),\n//     otherwise Postgres rejects the upsert\n//   - proto3 JSON omits false/0/empty, so booleans default to false and\n//     missing metrics to 0\n\nconst inputs = $input.all();\nconst meta0 = $('Account: build queries').itemMatching(0).json;\nconst cid = meta0.customer_id;\nconst ts = meta0.pass_at;\nconst tz = meta0.time_zone || 'UTC';\nconst account = $('Loop over accounts').first().json;\n\n// ---------------------------------------------------------------- helpers\nconst num = (v) => (v === undefined || v === null || v === '' ? 0 : Number(v));\nconst numOrNull = (v) => (v === undefined || v === null || v === '' ? null : Number(v));\nconst str = (v) => (v === undefined || v === null ? null : String(v));\nconst lastPart = (rn) => (rn ? String(rn).split('/').pop() : null);\nconst tildeParts = (rn) => (rn ? String(rn).split('/').pop().split('~') : []);\n\n// Google returns account-local times without a zone (\"2026-09-29 14:03:11\").\n// Convert to UTC ISO using the account time zone.\nfunction localToUtc(local) {\n  if (!local) return null;\n  const [d, t = '00:00:00'] = String(local).split(' ');\n  const guess = new Date(`${d}T${t.slice(0, 8)}Z`);\n  if (Number.isNaN(guess.getTime())) return null;\n  try {\n    const parts = new Intl.DateTimeFormat('en-US', {\n      timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit',\n      hour: '2-digit', minute: '2-digit', second: '2-digit',\n    }).formatToParts(guess);\n    const get = (k) => Number(parts.find((p) => p.type === k).value);\n    const asZone = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'));\n    return new Date(guess.getTime() - (asZone - guess.getTime())).toISOString();\n  } catch (e) {\n    return guess.toISOString();\n  }\n}\n\n// ---------------------------------------------------------------- sha256\n// Code nodes may not be allowed to require('crypto'), so a small pure-JS SHA-256.\nfunction sha256(ascii) {\n  const utf8 = encodeURIComponent(ascii).replace(/%([0-9A-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));\n  const K = [];\n  const H = [];\n  let prime = 2;\n  const isPrime = (n) => { for (let f = 2; f * f <= n; f++) if (n % f === 0) return false; return true; };\n  const frac = (x) => ((x - Math.floor(x)) * 4294967296) | 0;\n  while (K.length < 64) {\n    if (isPrime(prime)) {\n      if (H.length < 8) H.push(frac(Math.pow(prime, 1 / 2)));\n      K.push(frac(Math.pow(prime, 1 / 3)));\n    }\n    prime++;\n  }\n  const bytes = [];\n  for (let i = 0; i < utf8.length; i++) bytes.push(utf8.charCodeAt(i));\n  const bitLen = bytes.length * 8;\n  bytes.push(0x80);\n  while (bytes.length % 64 !== 56) bytes.push(0);\n  for (let i = 7; i >= 0; i--) bytes.push(i >= 4 ? 0 : (bitLen >>> (i * 8)) & 0xff);\n  const rotr = (x, n) => (x >>> n) | (x << (32 - n));\n  const w = new Array(64);\n  for (let off = 0; off < bytes.length; off += 64) {\n    for (let i = 0; i < 16; i++) {\n      w[i] = (bytes[off + i * 4] << 24) | (bytes[off + i * 4 + 1] << 16) | (bytes[off + i * 4 + 2] << 8) | bytes[off + i * 4 + 3];\n    }\n    for (let i = 16; i < 64; i++) {\n      const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);\n      const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);\n      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;\n    }\n    let [a, b, c, d, e, f, g, h] = H;\n    for (let i = 0; i < 64; i++) {\n      const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);\n      const ch = (e & f) ^ (~e & g);\n      const t1 = (h + S1 + ch + K[i] + w[i]) | 0;\n      const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);\n      const maj = (a & b) ^ (a & c) ^ (b & c);\n      const t2 = (S0 + maj) | 0;\n      h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;\n    }\n    H[0] = (H[0] + a) | 0; H[1] = (H[1] + b) | 0; H[2] = (H[2] + c) | 0; H[3] = (H[3] + d) | 0;\n    H[4] = (H[4] + e) | 0; H[5] = (H[5] + f) | 0; H[6] = (H[6] + g) | 0; H[7] = (H[7] + h) | 0;\n  }\n  return H.map((x) => (x >>> 0).toString(16).padStart(8, '0')).join('');\n}\n\n// ---------------------------------------------------------------- name filter\n// Rules live in shared/names.js. Client towns, brand and competitor names are\n// allowed words, so \"mount pleasant cremation\" or a competitor's name survive.\nconst { filterTerm } = makeNameFilters([\n  ...(account.towns || []), ...(account.own_brand_terms || []), ...(account.competitor_terms || []),\n]);\n\n// ---------------------------------------------------------------- mappers\n// Each returns a list of [table, row]. Row shapes are fixed per table.\nconst metricsBasic = (m = {}) => ({\n  impressions: num(m.impressions), clicks: num(m.clicks), cost_micros: num(m.costMicros),\n  conversions: num(m.conversions), conversions_value: num(m.conversionsValue),\n});\n\nconst negativeRow = (level, scopeId, criterionId, campaignId, adGroupId, sharedSetId, kw = {}) => ({\n  customer_id: cid, level, scope_id: String(scopeId), criterion_id: String(criterionId),\n  campaign_id: campaignId, ad_group_id: adGroupId, shared_set_id: sharedSetId,\n  text: kw.text || '', match_type: kw.matchType || null, removed_at: null, synced_at: ts,\n});\n\nfunction assetRow(level, scopeId, link = {}, a = {}, campaignId, adGroupId) {\n  const sl = a.sitelinkAsset || {};\n  const co = a.calloutAsset || {};\n  const sn = a.structuredSnippetAsset || {};\n  const call = a.callAsset || {};\n  const text = sl.linkText || co.calloutText || (sn.header ? `${sn.header}: ${(sn.values || []).join(', ')}` : null);\n  return {\n    customer_id: cid, level, scope_id: String(scopeId), asset_id: str(a.id), field_type: link.fieldType || 'UNKNOWN',\n    campaign_id: campaignId, ad_group_id: adGroupId, type: a.type || null, name: a.name || null,\n    status: link.status || null, primary_status: link.primaryStatus || null, text,\n    description1: sl.description1 || null, description2: sl.description2 || null,\n    final_url: (a.finalUrls || [])[0] || null, phone_number: call.phoneNumber || null,\n    call_conversion_reporting_state: call.callConversionReportingState || null,\n    call_conversion_action: call.callConversionAction || null, removed_at: null, synced_at: ts,\n  };\n}\n\nconst MAP = {\n  customer: (r) => {\n    const c = r.customer || {};\n    const crs = c.callReportingSetting || {};\n    const cts = c.conversionTrackingSetting || {};\n    return [['ad_accounts', {\n      customer_id: cid, descriptive_name: c.descriptiveName || null, currency_code: c.currencyCode || null,\n      time_zone: c.timeZone || null, is_manager: Boolean(c.manager), is_test_account: Boolean(c.testAccount),\n      auto_tagging_enabled: Boolean(c.autoTaggingEnabled),\n      call_reporting_enabled: Boolean(crs.callReportingEnabled),\n      call_conversion_reporting_enabled: Boolean(crs.callConversionReportingEnabled),\n      call_conversion_action: crs.callConversionAction || null,\n      conversion_tracking_status: cts.conversionTrackingStatus || null,\n      enhanced_conversions_for_leads: Boolean(cts.enhancedConversionsForLeadsEnabled),\n      synced_at: ts,\n    }]];\n  },\n\n  campaigns: (r) => {\n    const c = r.campaign || {};\n    const b = r.campaignBudget || {};\n    const ns = c.networkSettings || {};\n    const geo = c.geoTargetTypeSetting || {};\n    return [['campaigns', {\n      customer_id: cid, campaign_id: str(c.id), name: c.name || '', status: c.status || null,\n      serving_status: c.servingStatus || null, primary_status: c.primaryStatus || null,\n      primary_status_reasons: c.primaryStatusReasons || [],\n      channel_type: c.advertisingChannelType || null, channel_sub_type: c.advertisingChannelSubType || null,\n      bidding_strategy_type: c.biddingStrategyType || null,\n      target_cpa_micros: numOrNull((c.targetCpa || {}).targetCpaMicros) || numOrNull((c.maximizeConversions || {}).targetCpaMicros),\n      target_roas: numOrNull((c.targetRoas || {}).targetRoas) || numOrNull((c.maximizeConversionValue || {}).targetRoas),\n      budget_id: str(b.id), budget_micros: numOrNull(b.amountMicros), budget_delivery: b.deliveryMethod || null,\n      budget_shared: Boolean(b.explicitlyShared),\n      network_search: Boolean(ns.targetGoogleSearch), network_partners: Boolean(ns.targetSearchNetwork),\n      network_display: Boolean(ns.targetContentNetwork),\n      positive_geo_target_type: geo.positiveGeoTargetType || null, negative_geo_target_type: geo.negativeGeoTargetType || null,\n      removed_at: c.status === 'REMOVED' ? ts : null, synced_at: ts,\n    }]];\n  },\n\n  campaign_criteria: (r) => {\n    const cc = r.campaignCriterion || {};\n    const campaignId = str((r.campaign || {}).id);\n    if (cc.type === 'KEYWORD') {\n      if (!cc.negative) return [];\n      return [['negatives', negativeRow('campaign', campaignId, cc.criterionId, campaignId, null, null, cc.keyword)]];\n    }\n    const as = cc.adSchedule || {};\n    const prox = cc.proximity || {};\n    const hasSchedule = Boolean(as.dayOfWeek);\n    return [['campaign_targets', {\n      customer_id: cid, campaign_id: campaignId, criterion_id: str(cc.criterionId), type: cc.type || 'UNKNOWN',\n      negative: Boolean(cc.negative), status: cc.status || null, bid_modifier: numOrNull(cc.bidModifier),\n      geo_target_constant: (cc.location || {}).geoTargetConstant || null,\n      radius: numOrNull(prox.radius), radius_units: prox.radiusUnits || null,\n      language_constant: (cc.language || {}).languageConstant || null,\n      day_of_week: as.dayOfWeek || null,\n      start_hour: hasSchedule ? num(as.startHour) : null, start_minute: as.startMinute || (hasSchedule ? 'ZERO' : null),\n      end_hour: hasSchedule ? num(as.endHour) : null, end_minute: as.endMinute || (hasSchedule ? 'ZERO' : null),\n      device: (cc.device || {}).type || null, removed_at: null, synced_at: ts,\n    }]];\n  },\n\n  ad_groups: (r) => {\n    const g = r.adGroup || {};\n    return [['ad_groups', {\n      customer_id: cid, ad_group_id: str(g.id), campaign_id: str((r.campaign || {}).id), name: g.name || '',\n      status: g.status || null, type: g.type || null, cpc_bid_micros: numOrNull(g.cpcBidMicros),\n      removed_at: null, synced_at: ts,\n    }]];\n  },\n\n  keywords: (r) => {\n    const k = r.adGroupCriterion || {};\n    const campaignId = str((r.campaign || {}).id);\n    const adGroupId = str((r.adGroup || {}).id);\n    if (k.negative) {\n      return [['negatives', negativeRow('ad_group', adGroupId, k.criterionId, campaignId, adGroupId, null, k.keyword)]];\n    }\n    const qi = k.qualityInfo || {};\n    const pe = k.positionEstimates || {};\n    return [['keywords', {\n      customer_id: cid, ad_group_id: adGroupId, criterion_id: str(k.criterionId), campaign_id: campaignId,\n      text: (k.keyword || {}).text || '', match_type: (k.keyword || {}).matchType || null,\n      status: k.status || null, system_serving_status: k.systemServingStatus || null,\n      approval_status: k.approvalStatus || null, cpc_bid_micros: numOrNull(k.cpcBidMicros),\n      effective_cpc_bid_micros: numOrNull(k.effectiveCpcBidMicros), final_url: (k.finalUrls || [])[0] || null,\n      quality_score: numOrNull(qi.qualityScore), qs_creative: qi.creativeQualityScore || null,\n      qs_landing_page: qi.postClickQualityScore || null, qs_expected_ctr: qi.searchPredictedCtr || null,\n      first_page_cpc_micros: numOrNull(pe.firstPageCpcMicros), top_of_page_cpc_micros: numOrNull(pe.topOfPageCpcMicros),\n      first_position_cpc_micros: numOrNull(pe.firstPositionCpcMicros), removed_at: null, synced_at: ts,\n    }]];\n  },\n\n  shared_sets: (r) => {\n    const s = r.sharedSet || {};\n    return [['shared_sets', {\n      customer_id: cid, shared_set_id: str(s.id), name: s.name || '', type: s.type || null, status: s.status || null,\n      member_count: num(s.memberCount), removed_at: null, synced_at: ts,\n    }]];\n  },\n\n  shared_criteria: (r) => {\n    const s = r.sharedSet || {};\n    const sc = r.sharedCriterion || {};\n    return [['negatives', negativeRow('shared_list', str(s.id), sc.criterionId, null, null, str(s.id), sc.keyword)]];\n  },\n\n  campaign_shared_sets: (r) => [['campaign_shared_sets', {\n    customer_id: cid, campaign_id: str((r.campaign || {}).id), shared_set_id: str((r.sharedSet || {}).id),\n    status: (r.campaignSharedSet || {}).status || null, removed_at: null, synced_at: ts,\n  }]],\n\n  ads: (r) => {\n    const aga = r.adGroupAd || {};\n    const ad = aga.ad || {};\n    const rsa = ad.responsiveSearchAd || {};\n    const ps = aga.policySummary || {};\n    const text = (list) => (list || []).map((h) => ({ text: h.text || '', pinned_field: h.pinnedField || null }));\n    return [['ads', {\n      customer_id: cid, ad_group_id: str((r.adGroup || {}).id), ad_id: str(ad.id), campaign_id: str((r.campaign || {}).id),\n      type: ad.type || null, status: aga.status || null, ad_strength: aga.adStrength || null,\n      final_urls: ad.finalUrls || [], path1: rsa.path1 || null, path2: rsa.path2 || null,\n      headlines: text(rsa.headlines), descriptions: text(rsa.descriptions),\n      approval_status: ps.approvalStatus || null, review_status: ps.reviewStatus || null,\n      policy_topics: (ps.policyTopicEntries || []).map((p) => ({ topic: p.topic || null, type: p.type || null })),\n      removed_at: null, synced_at: ts,\n    }]];\n  },\n\n  asset_labels: (r) => {\n    const v = r.adGroupAdAssetView || {};\n    const [, adId] = tildeParts(v.adGroupAd);\n    const m = r.metrics || {};\n    return [['ad_asset_labels', {\n      customer_id: cid, ad_group_id: str((r.adGroup || {}).id), ad_id: adId || '', asset_id: str((r.asset || {}).id),\n      field_type: v.fieldType || 'UNKNOWN', campaign_id: str((r.campaign || {}).id),\n      text: ((r.asset || {}).textAsset || {}).text || null, performance_label: v.performanceLabel || null,\n      pinned_field: v.pinnedField || null, enabled: Boolean(v.enabled),\n      impressions_30d: num(m.impressions), clicks_30d: num(m.clicks), cost_micros_30d: num(m.costMicros),\n      conversions_30d: num(m.conversions), synced_at: ts,\n    }]];\n  },\n\n  assets_account: (r) => [['assets', assetRow('account', cid, r.customerAsset, r.asset, null, null)]],\n  assets_campaign: (r) => {\n    const campaignId = str((r.campaign || {}).id);\n    return [['assets', assetRow('campaign', campaignId, r.campaignAsset, r.asset, campaignId, null)]];\n  },\n  assets_ad_group: (r) => {\n    const adGroupId = str((r.adGroup || {}).id);\n    return [['assets', assetRow('ad_group', adGroupId, r.adGroupAsset, r.asset, str((r.campaign || {}).id), adGroupId)]];\n  },\n\n  conversion_actions: (r) => {\n    const ca = r.conversionAction || {};\n    const vs = ca.valueSettings || {};\n    return [['conversion_actions', {\n      customer_id: cid, conversion_action_id: str(ca.id), name: ca.name || '', category: ca.category || null,\n      type: ca.type || null, origin: ca.origin || null, status: ca.status || null, counting_type: ca.countingType || null,\n      primary_for_goal: Boolean(ca.primaryForGoal), include_in_conversions: Boolean(ca.includeInConversionsMetric),\n      default_value: numOrNull(vs.defaultValue), always_use_default_value: Boolean(vs.alwaysUseDefaultValue),\n      click_lookback_days: numOrNull(ca.clickThroughLookbackWindowDays),\n      phone_call_duration_seconds: numOrNull(ca.phoneCallDurationSeconds),\n      attribution_model: (ca.attributionModelSettings || {}).attributionModel || null, removed_at: null, synced_at: ts,\n    }]];\n  },\n\n  // Reference lesson: impact (and its baseMetrics/potentialMetrics) is missing\n  // for some recommendation types - default to {} and 0. status is not sent, so\n  // an upsert never re-opens a row FF staff hid; \"Finish account\" handles open/expired.\n  recommendations: (r) => {\n    const rec = r.recommendation || {};\n    const imp = rec.impact || {};\n    const base = imp.baseMetrics || {};\n    const pot = imp.potentialMetrics || {};\n    return [['recommendations', {\n      resource_name: rec.resourceName, customer_id: cid,\n      campaign_id: rec.campaign ? lastPart(rec.campaign) : null, ad_group_id: rec.adGroup ? lastPart(rec.adGroup) : null,\n      type: rec.type || 'UNKNOWN', dismissed: Boolean(rec.dismissed), impact: imp,\n      est_extra_clicks: num(pot.clicks) - num(base.clicks),\n      est_extra_conversions: num(pot.conversions) - num(base.conversions),\n      est_cost_change_micros: num(pot.costMicros) - num(base.costMicros),\n      last_seen_at: ts, synced_at: ts,\n    }]];\n  },\n\n  change_events: (r) => {\n    const ce = r.changeEvent || {};\n    return [['change_events', {\n      resource_name: ce.resourceName, customer_id: cid, changed_at: localToUtc(ce.changeDateTime) || ts,\n      resource_type: ce.changeResourceType || null, changed_resource: ce.changeResourceName || null,\n      operation: ce.resourceChangeOperation || null, client_type: ce.clientType || null,\n      user_email: ce.userEmail || null,\n      changed_fields: ce.changedFields ? String(ce.changedFields).split(',').filter(Boolean) : [],\n      campaign_id: ce.campaign ? lastPart(ce.campaign) : null, ad_group_id: ce.adGroup ? lastPart(ce.adGroup) : null,\n      synced_at: ts,\n    }]];\n  },\n\n  campaign_daily: (r) => {\n    const m = r.metrics || {};\n    return [['campaign_daily', {\n      customer_id: cid, campaign_id: str((r.campaign || {}).id), date: (r.segments || {}).date,\n      ...metricsBasic(m),\n      all_conversions: num(m.allConversions), all_conversions_value: num(m.allConversionsValue),\n      view_through_conversions: num(m.viewThroughConversions),\n      phone_calls: num(m.phoneCalls), phone_impressions: num(m.phoneImpressions),\n      search_impression_share: numOrNull(m.searchImpressionShare),\n      search_budget_lost_is: numOrNull(m.searchBudgetLostImpressionShare),\n      search_rank_lost_is: numOrNull(m.searchRankLostImpressionShare),\n      search_top_is: numOrNull(m.searchTopImpressionShare),\n      search_abs_top_is: numOrNull(m.searchAbsoluteTopImpressionShare),\n      top_impression_pct: numOrNull(m.topImpressionPercentage),\n      abs_top_impression_pct: numOrNull(m.absoluteTopImpressionPercentage),\n      synced_at: ts,\n    }]];\n  },\n\n  ad_group_daily: (r) => {\n    const m = r.metrics || {};\n    return [['ad_group_daily', {\n      customer_id: cid, ad_group_id: str((r.adGroup || {}).id), date: (r.segments || {}).date,\n      campaign_id: str((r.campaign || {}).id), ...metricsBasic(m),\n      all_conversions: num(m.allConversions), all_conversions_value: num(m.allConversionsValue),\n      phone_calls: num(m.phoneCalls), synced_at: ts,\n    }]];\n  },\n\n  keyword_daily: (r) => {\n    const m = r.metrics || {};\n    return [['keyword_daily', {\n      customer_id: cid, ad_group_id: str((r.adGroup || {}).id),\n      criterion_id: str((r.adGroupCriterion || {}).criterionId), date: (r.segments || {}).date,\n      campaign_id: str((r.campaign || {}).id), ...metricsBasic(m), all_conversions: num(m.allConversions),\n      search_impression_share: numOrNull(m.searchImpressionShare), synced_at: ts,\n    }]];\n  },\n\n  search_terms: (r) => {\n    const m = r.metrics || {};\n    const seg = r.segments || {};\n    const kw = seg.keyword || {};\n    const info = kw.info || {};\n    const [, keywordCriterionId] = tildeParts(kw.adGroupCriterion);\n    const { stored, filtered } = filterTerm((r.searchTermView || {}).searchTerm);\n    return [['search_term_daily', {\n      customer_id: cid, ad_group_id: str((r.adGroup || {}).id), term_hash: sha256(stored),\n      keyword_criterion_id: keywordCriterionId || '', date: seg.date, campaign_id: str((r.campaign || {}).id),\n      search_term: stored, name_filtered: filtered, status: (r.searchTermView || {}).status || null,\n      keyword_text: info.text || null, keyword_match_type: info.matchType || null,\n      search_term_match_type: seg.searchTermMatchType || null,\n      ...metricsBasic(m), all_conversions: num(m.allConversions), synced_at: ts,\n    }]];\n  },\n\n  ad_daily: (r) => [['ad_daily', {\n    customer_id: cid, ad_group_id: str((r.adGroup || {}).id), ad_id: str(((r.adGroupAd || {}).ad || {}).id),\n    date: (r.segments || {}).date, campaign_id: str((r.campaign || {}).id), ...metricsBasic(r.metrics), synced_at: ts,\n  }]],\n\n  asset_daily: (r) => {\n    const m = r.metrics || {};\n    const campaignId = str((r.campaign || {}).id);\n    return [['asset_daily', {\n      customer_id: cid, level: 'campaign', scope_id: campaignId, asset_id: str((r.asset || {}).id),\n      field_type: (r.campaignAsset || {}).fieldType || 'UNKNOWN', date: (r.segments || {}).date, campaign_id: campaignId,\n      impressions: num(m.impressions), clicks: num(m.clicks), cost_micros: num(m.costMicros),\n      conversions: num(m.conversions), phone_calls: 0, synced_at: ts,\n    }]];\n  },\n\n  conversion_daily: (r) => {\n    const m = r.metrics || {};\n    const seg = r.segments || {};\n    const actionId = lastPart(seg.conversionAction);\n    if (!actionId) return [];\n    return [['conversion_daily', {\n      customer_id: cid, campaign_id: str((r.campaign || {}).id), conversion_action_id: actionId, date: seg.date,\n      conversions: num(m.conversions), conversions_value: num(m.conversionsValue),\n      all_conversions: num(m.allConversions), all_conversions_value: num(m.allConversionsValue), synced_at: ts,\n    }]];\n  },\n\n  hourly: (r) => {\n    const m = r.metrics || {};\n    const seg = r.segments || {};\n    return [['hourly_stats', {\n      customer_id: cid, campaign_id: str((r.campaign || {}).id), date: seg.date, hour: num(seg.hour),\n      day_of_week: seg.dayOfWeek || 'UNSPECIFIED', impressions: num(m.impressions), clicks: num(m.clicks),\n      cost_micros: num(m.costMicros), conversions: num(m.conversions), phone_calls: num(m.phoneCalls), synced_at: ts,\n    }]];\n  },\n\n  device: (r) => {\n    const seg = r.segments || {};\n    return [['device_daily', {\n      customer_id: cid, campaign_id: str((r.campaign || {}).id), date: seg.date, device: seg.device || 'UNSPECIFIED',\n      ...metricsBasic(r.metrics), synced_at: ts,\n    }]];\n  },\n\n  geo: (r) => {\n    const m = r.metrics || {};\n    const seg = r.segments || {};\n    const gv = r.geographicView || {};\n    return [['geo_daily', {\n      customer_id: cid, campaign_id: str((r.campaign || {}).id), date: seg.date,\n      location_type: gv.locationType || 'UNSPECIFIED', geo_target_constant: seg.geoTargetMostSpecificLocation || '',\n      country_criterion_id: str(gv.countryCriterionId), impressions: num(m.impressions), clicks: num(m.clicks),\n      cost_micros: num(m.costMicros), conversions: num(m.conversions), synced_at: ts,\n    }]];\n  },\n\n  calls: (r) => {\n    const cv = r.callView || {};\n    return [['calls', {\n      customer_id: cid, call_resource_name: cv.resourceName, campaign_id: str((r.campaign || {}).id),\n      ad_group_id: r.adGroup ? str(r.adGroup.id) : null, start_at: localToUtc(cv.startCallDateTime),\n      end_at: localToUtc(cv.endCallDateTime), duration_seconds: num(cv.callDurationSeconds),\n      status: cv.callStatus || null, type: cv.type || null, display_location: cv.callTrackingDisplayLocation || null,\n      synced_at: ts,\n    }]];\n  },\n};\n\n// Natural key (matches the primary key / unique constraint) and the columns to\n// sum when one batch has the same key twice.\nconst TABLES = {\n  ad_accounts: { key: ['customer_id'] },\n  campaigns: { key: ['customer_id', 'campaign_id'] },\n  campaign_targets: { key: ['customer_id', 'campaign_id', 'criterion_id'] },\n  ad_groups: { key: ['customer_id', 'ad_group_id'] },\n  keywords: { key: ['customer_id', 'ad_group_id', 'criterion_id'] },\n  negatives: { key: ['customer_id', 'level', 'scope_id', 'criterion_id'] },\n  shared_sets: { key: ['customer_id', 'shared_set_id'] },\n  campaign_shared_sets: { key: ['customer_id', 'campaign_id', 'shared_set_id'] },\n  ads: { key: ['customer_id', 'ad_group_id', 'ad_id'] },\n  ad_asset_labels: { key: ['customer_id', 'ad_group_id', 'ad_id', 'asset_id', 'field_type'] },\n  assets: { key: ['customer_id', 'level', 'scope_id', 'asset_id', 'field_type'] },\n  conversion_actions: { key: ['customer_id', 'conversion_action_id'] },\n  recommendations: { key: ['resource_name'] },\n  change_events: { key: ['resource_name'] },\n  campaign_daily: { key: ['customer_id', 'campaign_id', 'date'] },\n  ad_group_daily: { key: ['customer_id', 'ad_group_id', 'date'] },\n  keyword_daily: { key: ['customer_id', 'ad_group_id', 'criterion_id', 'date'] },\n  search_term_daily: {\n    key: ['customer_id', 'ad_group_id', 'term_hash', 'keyword_criterion_id', 'date'],\n    sum: ['impressions', 'clicks', 'cost_micros', 'conversions', 'conversions_value', 'all_conversions'],\n  },\n  ad_daily: { key: ['customer_id', 'ad_group_id', 'ad_id', 'date'] },\n  asset_daily: { key: ['customer_id', 'level', 'scope_id', 'asset_id', 'field_type', 'date'] },\n  conversion_daily: {\n    key: ['customer_id', 'campaign_id', 'conversion_action_id', 'date'],\n    sum: ['conversions', 'conversions_value', 'all_conversions', 'all_conversions_value'],\n  },\n  hourly_stats: { key: ['customer_id', 'campaign_id', 'date', 'hour'] },\n  device_daily: { key: ['customer_id', 'campaign_id', 'date', 'device'] },\n  geo_daily: {\n    key: ['customer_id', 'campaign_id', 'date', 'location_type', 'geo_target_constant'],\n    sum: ['impressions', 'clicks', 'cost_micros', 'conversions'],\n  },\n  calls: { key: ['customer_id', 'call_resource_name'] },\n};\n\nconst EMPTY_KEY_OK = new Set(['keyword_criterion_id', 'geo_target_constant']);\n\n// ---------------------------------------------------------------- run\nconst byTable = {}; // table -> Map(key -> row)\nconst queryResults = {};\n\ninputs.forEach((item, i) => {\n  const meta = $('Account: build queries').itemMatching(i).json;\n  const name = meta.query_name;\n  const parsed = parseStream(item.json);\n  const result = { rows: 0, error: parsed.error || null, tables: [] };\n  queryResults[name] = result;\n  if (parsed.error) return;\n\n  const mapper = MAP[name];\n  if (!mapper) {\n    result.error = `no mapper for ${name}`;\n    return;\n  }\n  const tables = new Set();\n  for (const row of parsed.rows) {\n    let mapped;\n    try {\n      mapped = mapper(row);\n    } catch (e) {\n      result.error = `map error: ${e.message}`.slice(0, 300);\n      continue;\n    }\n    for (const [table, out] of mapped) {\n      const def = TABLES[table];\n      // Skip a row with an incomplete key rather than fail the whole batch.\n      // Two key columns legitimately hold '' (no matched keyword / no location).\n      if (def.key.some((k) => out[k] === null || out[k] === undefined || (out[k] === '' && !EMPTY_KEY_OK.has(k)))) {\n        continue;\n      }\n      tables.add(table);\n      byTable[table] = byTable[table] || new Map();\n      const key = def.key.map((k) => out[k]).join('|');\n      const existing = byTable[table].get(key);\n      if (existing && def.sum) {\n        for (const col of def.sum) existing[col] = num(existing[col]) + num(out[col]);\n      } else {\n        byTable[table].set(key, out);\n      }\n      result.rows++;\n    }\n  }\n  result.tables = [...tables];\n});\n\nconst CHUNK = 500;\nconst out = [{\n  json: {\n    kind: 'start',\n    table: 'sync_run_accounts',\n    on_conflict: 'sync_run_id,customer_id',\n    rows: [{ sync_run_id: meta0.sync_run_id, customer_id: cid, status: 'partial', started_at: ts }],\n    customer_id: cid,\n    pass_at: ts,\n    query_results: queryResults,\n  },\n}];\n\n// ad_accounts first, then structure, then facts - keeps the order readable in the log.\nfor (const table of Object.keys(TABLES)) {\n  const rows = byTable[table] ? [...byTable[table].values()] : [];\n  for (let i = 0; i < rows.length; i += CHUNK) {\n    out.push({\n      json: { kind: 'upsert', table, on_conflict: TABLES[table].key.join(','), rows: rows.slice(i, i + CHUNK) },\n    });\n  }\n}\n\nreturn out;\n"
+      },
+      "notes": "Maps rows, applies the search term name filter, merges duplicate keys, chunks upserts. Matches responses to queries with itemMatching()."
+    },
+    {
+      "id": "79fdb4e7-2ca7-4638-972f-a02f52d3afd3",
+      "name": "Write rows",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4840,
+        600
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/{{ $json.table }}?on_conflict={{ $json.on_conflict }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.rows) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "PostgREST upsert on the natural key (replaces the reference's delete-then-create)."
+    },
+    {
+      "id": "6e51e79e-e3a6-4b73-a919-6083375f337a",
+      "name": "Finish account",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5060,
+        600
+      ],
+      "parameters": {
+        "jsCode": "// Runs once per account after \"Write rows\". Works out what succeeded, then\n// emits the follow-up writes for \"Account cleanup\":\n//   - soft-remove: structure rows Google no longer returns get removed_at set\n//     (only for queries that fully succeeded - a failed query must never\n//     make live keywords look removed)\n//   - recommendations: open -> expired when Google stops returning them,\n//     expired -> open when they come back (hidden rows are left alone)\n//   - the final sync_run_accounts row, and ad_accounts.last_synced_at\n//\n// Each input item is the response to one \"Map and plan writes\" item; they are\n// matched with itemMatching(i), not by position.\n\nconst inputs = $input.all();\nconst start = $('Map and plan writes').itemMatching(0).json;\nconst account = $('Loop over accounts').first().json;\nconst cid = start.customer_id;\nconst ts = start.pass_at;\nconst results = start.query_results || {};\nconst enc = encodeURIComponent;\n\n// Tables each query writes. A write failure on a table fails its queries.\nconst QUERY_TABLES = {\n  customer: ['ad_accounts'],\n  campaigns: ['campaigns'],\n  campaign_criteria: ['campaign_targets', 'negatives'],\n  ad_groups: ['ad_groups'],\n  keywords: ['keywords', 'negatives'],\n  shared_sets: ['shared_sets'],\n  shared_criteria: ['negatives'],\n  campaign_shared_sets: ['campaign_shared_sets'],\n  ads: ['ads'],\n  asset_labels: ['ad_asset_labels'],\n  assets_account: ['assets'],\n  assets_campaign: ['assets'],\n  assets_ad_group: ['assets'],\n  conversion_actions: ['conversion_actions'],\n  recommendations: ['recommendations'],\n  change_events: ['change_events'],\n  campaign_daily: ['campaign_daily'],\n  ad_group_daily: ['ad_group_daily'],\n  keyword_daily: ['keyword_daily'],\n  search_terms: ['search_term_daily'],\n  ad_daily: ['ad_daily'],\n  asset_daily: ['asset_daily'],\n  conversion_daily: ['conversion_daily'],\n  hourly: ['hourly_stats'],\n  device: ['device_daily'],\n  geo: ['geo_daily'],\n  calls: ['calls'],\n};\n\n// Structure queries and the rows they own: [table, extra PostgREST filter].\nconst SOFT_REMOVE = {\n  campaigns: [['campaigns', '']],\n  campaign_criteria: [['campaign_targets', ''], ['negatives', '&level=eq.campaign']],\n  ad_groups: [['ad_groups', '']],\n  keywords: [['keywords', ''], ['negatives', '&level=eq.ad_group']],\n  shared_sets: [['shared_sets', '']],\n  shared_criteria: [['negatives', '&level=eq.shared_list']],\n  campaign_shared_sets: [['campaign_shared_sets', '']],\n  ads: [['ads', '']],\n  assets_account: [['assets', '&level=eq.account']],\n  assets_campaign: [['assets', '&level=eq.campaign']],\n  assets_ad_group: [['assets', '&level=eq.ad_group']],\n  conversion_actions: [['conversion_actions', '']],\n};\n\n// 1. Write results\nconst failedTables = {};\nlet startWriteOk = true;\ninputs.forEach((item, i) => {\n  const plan = $('Map and plan writes').itemMatching(i).json;\n  const r = item.json || {};\n  const ok = r.statusCode >= 200 && r.statusCode < 300;\n  if (ok) return;\n  const body = r.body || {};\n  const message = body.message || body.details || (r.error && r.error.message) || `status ${r.statusCode}`;\n  if (plan.kind === 'start') startWriteOk = false;\n  else failedTables[plan.table] = String(message).slice(0, 300);\n});\n\n// 2. Per-query outcome\nconst resources = {};\nconst failedQueries = [];\nfor (const [name, res] of Object.entries(results)) {\n  let error = res.error || null;\n  if (!error) {\n    const bad = (QUERY_TABLES[name] || []).find((t) => failedTables[t]);\n    if (bad) error = `write to ${bad} failed: ${failedTables[bad]}`;\n  }\n  resources[name] = { rows: res.rows || 0, error };\n  if (error) failedQueries.push(name);\n}\n\nconst total = Object.keys(results).length;\nlet status = 'ok';\nif (failedQueries.length > 0) status = 'partial';\nif (failedQueries.includes('customer') || failedQueries.length === total) status = 'failed';\n\nconst summaryError = failedQueries.length\n  ? failedQueries.slice(0, 5).map((q) => `${q}: ${resources[q].error}`).join(' | ').slice(0, 1000)\n  : null;\n\n// 3. Follow-up writes\nconst out = [];\n\nfor (const [query, specs] of Object.entries(SOFT_REMOVE)) {\n  if (!results[query] || resources[query].error) continue;\n  for (const [table, extra] of specs) {\n    out.push({\n      json: {\n        method: 'PATCH',\n        path: `${table}?customer_id=eq.${cid}${extra}&removed_at=is.null&synced_at=lt.${enc(ts)}`,\n        prefer: 'return=minimal',\n        body: { removed_at: ts },\n      },\n    });\n  }\n}\n\nif (results.recommendations && !resources.recommendations.error) {\n  out.push({\n    json: {\n      method: 'PATCH',\n      path: `recommendations?customer_id=eq.${cid}&status=eq.open&last_seen_at=lt.${enc(ts)}`,\n      prefer: 'return=minimal',\n      body: { status: 'expired' },\n    },\n  });\n  out.push({\n    json: {\n      method: 'PATCH',\n      path: `recommendations?customer_id=eq.${cid}&status=eq.expired&last_seen_at=gte.${enc(ts)}`,\n      prefer: 'return=minimal',\n      body: { status: 'open' },\n    },\n  });\n}\n\nconst now = new Date().toISOString();\nout.push({\n  json: {\n    method: 'POST',\n    path: 'sync_run_accounts?on_conflict=sync_run_id,customer_id',\n    prefer: 'resolution=merge-duplicates,return=minimal',\n    body: [{\n      sync_run_id: start.rows[0].sync_run_id,\n      customer_id: cid,\n      status,\n      resources,\n      error: startWriteOk ? summaryError : `could not record the start of this account's sync. ${summaryError || ''}`.trim(),\n      started_at: ts,\n      finished_at: now,\n    }],\n  },\n});\n\nif (status !== 'failed') {\n  out.push({\n    json: {\n      method: 'PATCH',\n      path: `ad_accounts?customer_id=eq.${cid}`,\n      prefer: 'return=minimal',\n      body: { last_synced_at: now, first_synced_at: account.first_synced_at || now },\n    },\n  });\n}\n\nreturn out;\n"
+      }
+    },
+    {
+      "id": "bbaa7afc-b4be-4ae5-8aca-36dee99e7178",
+      "name": "Account cleanup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5280,
+        600
+      ],
+      "parameters": {
+        "method": "={{ $json.method }}",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/{{ $json.path }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "={{ $json.prefer || 'return=minimal' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body ?? {}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Soft-remove (removed_at), recommendation open/expired, the account's sync result, last_synced_at."
+    },
+    {
+      "id": "fb8e7e77-c1dd-4784-b299-221fd041f8ed",
+      "name": "Load run results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3960,
+        1000
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/sync_run_accounts?select=customer_id,status&sync_run_id=eq.{{ $('Start sync run').first().json.id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "id": "a8bc182c-3ecd-4559-b97d-fa6aa928e17c",
+      "name": "Summarize run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        1000
+      ],
+      "parameters": {
+        "jsCode": "// Totals for the sync_runs row. Input: this run's sync_run_accounts rows\n// (\"Load run results\" has alwaysOutputData on, so an empty run is one empty item).\nconst run = $('Start sync run').first().json;\nconst rows = $input.all().map((i) => i.json).filter((r) => r && r.status);\n\nconst ok = rows.filter((r) => r.status === 'ok').length;\nconst partial = rows.filter((r) => r.status === 'partial').length;\nconst failed = rows.filter((r) => r.status === 'failed').length;\n\nlet status = 'ok';\nif (partial > 0 || failed > 0) status = 'partial';\nif (rows.length > 0 && failed === rows.length) status = 'failed';\n\nreturn [{\n  json: {\n    sync_run_id: run.id,\n    accounts_total: rows.length,\n    accounts_ok: ok + partial,\n    accounts_failed: failed,\n    accounts_partial: partial,\n    patch: {\n      finished_at: new Date().toISOString(),\n      status,\n      accounts_ok: ok + partial,\n      accounts_failed: failed,\n      // Read-only sync: there is no write path to Google Ads in this workflow.\n      mutate_calls: 0,\n    },\n  },\n}];\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "e7c8f89c-cde0-4ee0-b8b0-116fdce5927d",
+      "name": "Close sync run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4400,
+        1000
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/sync_runs?id=eq.{{ $json.sync_run_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patch) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      }
+    },
+    {
+      "id": "969e127b-c1cc-4396-81f8-30d2285c9223",
+      "name": "Get missing geo names",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4620,
+        1000
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/rpc/ff_missing_geo_targets",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_limit: 500 }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "id": "ad5803a1-d48c-43b2-bd03-5dc4b787d52b",
+      "name": "Build geo query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4840,
+        1000
+      ],
+      "parameters": {
+        "jsCode": "// Geo target constants that have no name yet (from ff_missing_geo_targets).\n// Emits exactly one item: { skip: true } when there is nothing to look up.\nconst cfg = $('Config').first().json;\nconst ids = $input\n  .all()\n  .map((i) => i.json && i.json.geo_target_constant)\n  .filter((g) => typeof g === 'string' && /^geoTargetConstants\\/[0-9]+$/.test(g));\n\n// geo_target_constant can be queried through any account; prefer the MCC.\nlet customerId = cfg.MCC_ID || null;\nlet loginCustomerId = cfg.MCC_ID || null;\nif (!customerId) {\n  const first = $('Prepare account list').first().json;\n  customerId = first.customer_id || null;\n  loginCustomerId = first.login_customer_id || null;\n}\n\nif (ids.length === 0 || !customerId) return [{ json: { skip: true, count: 0 } }];\n\nconst list = ids.map((g) => `'${g}'`).join(',');\nreturn [{\n  json: {\n    skip: false,\n    count: ids.length,\n    customer_id: customerId,\n    login_customer_id: loginCustomerId,\n    gaql: `SELECT geo_target_constant.resource_name, geo_target_constant.name, geo_target_constant.canonical_name, geo_target_constant.target_type, geo_target_constant.country_code FROM geo_target_constant WHERE geo_target_constant.resource_name IN (${list})`,\n  },\n}];\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "fde39aac-0c7a-4075-afdd-8142737578d9",
+      "name": "Geo lookup needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        5060,
+        1000
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "329cf5e7-c145-4ce0-b215-1803d132f6dd",
+              "leftValue": "={{ !$json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "0a60811e-7d6b-42af-a1a5-f72ff40b2f04",
+      "name": "Refresh token (geo)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5280,
+        800
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "",
+          "name": "FF Google OAuth refresh"
+        }
+      },
+      "notes": "OAuth refresh. client_id, client_secret and refresh_token come from the Custom Auth credential 'FF Google OAuth refresh' - never from code or Supabase."
+    },
+    {
+      "id": "1b589317-9d6a-4f16-9465-cde4e0f34eee",
+      "name": "Search geo names",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5500,
+        800
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://googleads.googleapis.com/{{ $('Config').first().json.GOOGLE_ADS_API_VERSION }}/customers/{{ $('Build geo query').first().json.customer_id }}/googleAds:searchStream",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify(Object.assign({ \"Authorization\": \"Bearer \" + ($('Refresh token (geo)').first().json.access_token || 'missing'), \"Content-Type\": \"application/json\" }, $('Build geo query').first().json.login_customer_id ? { \"login-customer-id\": $('Build geo query').first().json.login_customer_id } : {})) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $('Build geo query').first().json.gaql }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "",
+          "name": "FF Google Ads developer token"
+        }
+      }
+    },
+    {
+      "id": "91facb6b-84e2-47fc-b3c0-1014cf4a48a6",
+      "name": "Map geo names",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5720,
+        800
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/gads.js (included by scripts/build-n8n.mjs) -------------------\n// Reading Google Ads REST responses from an HTTP Request node that has\n// \"Full response\" on (and usually \"Never error\"), with the body as text or JSON.\n\nfunction gadsBody(r) {\n  let body = r && (r.body !== undefined ? r.body : r.data);\n  if (typeof body === 'string') {\n    try {\n      body = body ? JSON.parse(body) : null;\n    } catch (e) {\n      return { __unparsable: true };\n    }\n  }\n  return body;\n}\n\n// Human-readable error from a failed call, or null when it succeeded.\nfunction gadsError(r) {\n  if (!r) return 'no response';\n  if (r.error && r.statusCode === undefined) return String(r.error.message || JSON.stringify(r.error)).slice(0, 500);\n  if (r.statusCode >= 200 && r.statusCode < 300) return null;\n  const body = gadsBody(r);\n  const first = Array.isArray(body) ? body[0] : body;\n  const err = first && first.error;\n  const detail = err && err.details && err.details[0] && err.details[0].errors && err.details[0].errors[0];\n  const code = detail && detail.errorCode ? ` [${Object.values(detail.errorCode).join(',')}]` : '';\n  return `${r.statusCode} ${(detail && detail.message) || (err && err.message) || 'error'}${code}`.slice(0, 500);\n}\n\n// searchStream / search -> { rows } or { error }.\nfunction parseStream(r) {\n  const error = gadsError(r);\n  if (error) return { error };\n  const body = gadsBody(r);\n  if (body && body.__unparsable) return { error: 'response was not JSON' };\n  const rows = [];\n  for (const batch of Array.isArray(body) ? body : [body]) {\n    for (const row of (batch && batch.results) || []) rows.push(row);\n  }\n  return { rows };\n}\n// ---- end shared/gads.js -----------------------------------------------------\n\n// geo_target_constant search response -> geo_targets rows (a name lookup cache).\nconst parsed = parseStream($input.first().json || {});\nconst now = new Date().toISOString();\nconst rows = [];\nfor (const row of parsed.rows || []) {\n  const g = row.geoTargetConstant || {};\n  if (!g.resourceName) continue;\n  rows.push({\n    geo_target_constant: g.resourceName,\n    name: g.name || null,\n    canonical_name: g.canonicalName || null,\n    target_type: g.targetType || null,\n    country_code: g.countryCode || null,\n    synced_at: now,\n  });\n}\nreturn [{ json: { rows, error: parsed.error || null } }];\n"
+      }
+    },
+    {
+      "id": "509d475c-9277-4cdf-8733-95026a91ccce",
+      "name": "Upsert geo names",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5940,
+        800
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/geo_targets?on_conflict=geo_target_constant",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.rows) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      }
+    },
+    {
+      "id": "d8ae5128-0e13-4b86-86d8-c043297ad5b5",
+      "name": "After geo",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        6160,
+        1000
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "030e54a2-ad88-4919-a4fd-91b84c3de271",
+      "name": "Get alerts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        6380,
+        1000
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/rpc/ff_sync_alerts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_sync_run_id: $('Start sync run').first().json.id }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "id": "59607c77-bbf7-4c7b-a252-7db0bc40978d",
+      "name": "Build Slack note",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6600,
+        1000
+      ],
+      "parameters": {
+        "jsCode": "// Slack note to Rob, only when something is flagged (PLAN.md 5.6).\n// Calm tone, plain hyphens, no emoji, no search terms (ff_sync_alerts never\n// returns search terms).\nconst cfg = $('Config').first().json;\nconst summary = $('Summarize run').first().json;\nconst alerts = $input.all().map((i) => i.json).filter((a) => a && a.kind);\n\nif (alerts.length === 0 || !cfg.SLACK_CHANNEL) {\n  return [{ json: { skip: true, alerts: alerts.length, slack_configured: Boolean(cfg.SLACK_CHANNEL) } }];\n}\n\nconst fmtId = (id) => (id && id.length === 10 ? `${id.slice(0, 3)}-${id.slice(3, 6)}-${id.slice(6)}` : id || '');\nconst day = new Date().toISOString().slice(0, 10);\nconst how = cfg.trigger === 'manual' ? 'manual sync' : cfg.trigger === 'schedule_weekly' ? 'weekly sync' : 'daily sync';\n\nconst lines = [\n  `FF ads ${how} - ${day}: ${summary.accounts_total} account(s), ${summary.accounts_failed} failed, ${summary.accounts_partial} partial.`,\n  `${alerts.length} item(s) to look at:`,\n];\nfor (const severity of ['high', 'medium']) {\n  const group = alerts.filter((a) => a.severity === severity);\n  if (group.length === 0) continue;\n  lines.push('', severity === 'high' ? 'Needs attention' : 'Worth a look');\n  for (const a of group.slice(0, 25)) {\n    lines.push(`- ${a.account_name} (${fmtId(a.customer_id)}): ${a.detail}`);\n  }\n  if (group.length > 25) lines.push(`- and ${group.length - 25} more on the dashboard`);\n}\n\n// Keep it plain: no emoji, straight hyphens only.\nconst text = lines.join('\\n').replace(/[–—]/g, '-');\n\nreturn [{ json: { skip: false, text } }];\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "01ed5a44-7b0d-4ea4-8960-3dccebf08abb",
+      "name": "Send Slack note?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        6820,
+        1000
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "bc8cebb8-d61f-4fea-9b61-e6078520e0cc",
+              "leftValue": "={{ !$json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "77a0684b-ce04-4715-8e6d-db5aa5f2cfd0",
+      "name": "Send Slack note",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        7040,
+        1000
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "FF Slack"
+        }
+      },
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.SLACK_CHANNEL }}",
+          "mode": "name"
+        },
+        "text": "={{ $json.text }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Optional. Needs the 'FF Slack' credential and SLACK_CHANNEL in Config; a Slack failure never stops the workflow."
+    },
+    {
+      "id": "20229058-4ad7-4cc4-bda1-2753f0d332a6",
+      "name": "Get suggestion candidates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        6380,
+        1400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/rpc/ff_suggestion_candidates",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_sync_run_id: $('Start sync run').first().json.id }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "id": "1de951a2-c026-4656-b393-266e2162d85b",
+      "name": "Prepare suggestion inputs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6600,
+        1400
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/ai.js (included by scripts/build-n8n.mjs) ----------------------\n// Checks and cleans what the AI returns before it is stored.\n\nconst ACTION_TYPES = ['update_daily_budget', 'pause_campaign', 'resume_campaign'];\n\n// Hard rule 6: calm tone, plain hyphens, no emoji.\nfunction cleanText(text) {\n  return String(text || '')\n    .replace(/[‒-―−]/g, '-')\n    .replace(/[‘’]/g, \"'\")\n    .replace(/[“”]/g, '\"')\n    .replace(/\\p{Extended_Pictographic}️?/gu, '')\n    .replace(/[ \\t]+\\n/g, '\\n')\n    .trim();\n}\n\n// Only the three reference action types survive; anything else becomes null.\n// daily_budget is in the account currency.\nfunction normalizeAction(a) {\n  if (!a || typeof a !== 'object' || !ACTION_TYPES.includes(a.action_type)) return null;\n  const out = { action_type: a.action_type, daily_budget: null, reason: cleanText(a.reason || '').slice(0, 300) };\n  if (a.action_type === 'update_daily_budget') {\n    const n = Number(a.daily_budget);\n    if (!(n > 0 && n < 100000)) return null;\n    out.daily_budget = Math.round(n * 100) / 100;\n  }\n  return out;\n}\n\nconst money = (micros) => Math.round(Number(micros || 0) / 1e4) / 100;\nconst pct = (v) => (v === null || v === undefined ? 'n/a' : `${Math.round(Number(v) * 100)}%`);\n// ---- end shared/ai.js -------------------------------------------------------\n\n// Campaigns worth a proactive look (ff_suggestion_candidates already applied the\n// reference dedupe: no unresolved proposal, nothing proactive in the last 24h).\n// One item per campaign for the AI Agent; { skip: true } when there are none.\nconst cfg = $('Config').first().json;\nconst rows = $input.all().map((i) => i.json).filter((r) => r && r.campaign_id);\n\nif (!cfg.AI_SUGGESTIONS || rows.length === 0) return [{ json: { skip: true } }];\n\nreturn rows.slice(0, 50).map((r) => ({\n  json: {\n    skip: false,\n    customer_id: r.customer_id,\n    campaign_id: r.campaign_id,\n    campaign_name: r.campaign_name,\n    status: r.status,\n    currency: r.currency_code || '',\n    daily_budget: money(r.budget_micros),\n    last_day: r.last_day,\n    day_cost: money(r.day_cost_micros),\n    day_clicks: Number(r.day_clicks || 0),\n    day_conversions: Number(r.day_conversions || 0),\n    cost_30d: money(r.cost_30d_micros),\n    clicks_30d: Number(r.clicks_30d || 0),\n    conversions_30d: Math.round(Number(r.conversions_30d || 0) * 100) / 100,\n    conv_value_30d: Math.round(Number(r.conv_value_30d || 0) * 100) / 100,\n    search_is_30d: pct(r.search_is_30d),\n    budget_lost_is_30d: pct(r.budget_lost_is_30d),\n    recommendations: r.recommendations || 'None open.',\n  },\n}));\n"
+      }
+    },
+    {
+      "id": "28599571-22ee-4db2-8bf7-2426d33c3a08",
+      "name": "Anything to review?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        6820,
+        1400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "1f4b4fb8-d01d-47d4-b3bb-c4564bb4d207",
+              "leftValue": "={{ !$json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "2ff3a515-73a8-46f0-a0ca-b37be6c1f589",
+      "name": "Suggest (AI Agent)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        7040,
+        1400
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Campaign: {{ $json.campaign_name }} (status {{ $json.status }}, daily budget {{ $json.daily_budget }} {{ $json.currency }}).\nLatest day ({{ $json.last_day }}): cost {{ $json.day_cost }} {{ $json.currency }}, {{ $json.day_clicks }} clicks, {{ $json.day_conversions }} conversions.\nLast 30 days: cost {{ $json.cost_30d }} {{ $json.currency }}, {{ $json.clicks_30d }} clicks, {{ $json.conversions_30d }} conversions (value {{ $json.conv_value_30d }}), search impression share {{ $json.search_is_30d }}, lost to budget {{ $json.budget_lost_is_30d }}.\nOpen Google recommendations: {{ $json.recommendations }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You review one Google Ads campaign for Funeral Futurist (FF), an agency for funeral homes and cremation providers, right after the daily data sync. Nobody asked a question. Decide whether there is a genuinely useful, specific suggestion worth posting in the campaign's assistant thread now - for example real spend with no conversions, a budget that clearly limits a campaign that converts, or a Google recommendation with real impact. Be conservative: set should_post to false unless something clearly stands out. A missed suggestion is far better than noise FF starts ignoring.\n\nWrite in a calm, plain, respectful tone - these are funeral homes and cremation providers. Use plain hyphens (-), never long dashes, and no emoji. Never write personal names of families or of people who have died; if the text you were given contains [name], keep it as [name]. Only use the numbers you were given; never invent data.\n\nproposed_action must be null UNLESS one of exactly these three changes is clearly wanted:\n- \"update_daily_budget\": set the daily budget to a specific amount in the account currency. daily_budget is required and must be a plain number. If no amount is clear, ask a short clarifying question and leave proposed_action null.\n- \"pause_campaign\": pause the campaign.\n- \"resume_campaign\": resume a paused campaign.\nFor pause_campaign and resume_campaign set daily_budget to null. Always add a one-sentence reason. Never say a change has been made - say it is ready for Rob to confirm (only Rob can apply changes). Anything else (targeting, keywords, ad copy, questions) gets proposed_action: null and a normal answer."
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "onError continueRegularOutput: a malformed model output must not stop the workflow (reference lesson). The next Code node treats it as no answer."
+    },
+    {
+      "id": "ea43295d-bb2f-40bb-b7bd-1b5b9c26da16",
+      "name": "Suggest (AI Agent) - OpenAI model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        6960,
+        1620
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "",
+          "name": "FF OpenAI"
+        }
+      },
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "1a97080b-7582-4652-bc6d-cec2671886c9",
+      "name": "Suggest (AI Agent) - output format",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        7160,
+        1620
+      ],
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"should_post\": {\n      \"type\": \"boolean\"\n    },\n    \"message\": {\n      \"type\": \"string\"\n    },\n    \"proposed_action\": {\n      \"type\": [\n        \"object\",\n        \"null\"\n      ],\n      \"properties\": {\n        \"action_type\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"update_daily_budget\",\n            \"pause_campaign\",\n            \"resume_campaign\"\n          ]\n        },\n        \"daily_budget\": {\n          \"type\": [\n            \"number\",\n            \"null\"\n          ]\n        },\n        \"reason\": {\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"action_type\",\n        \"daily_budget\",\n        \"reason\"\n      ]\n    }\n  },\n  \"required\": [\n    \"should_post\",\n    \"message\",\n    \"proposed_action\"\n  ]\n}"
+      }
+    },
+    {
+      "id": "74be98a5-9200-482b-9cf6-c11b107bf4e4",
+      "name": "Prepare suggestions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7260,
+        1400
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/ai.js (included by scripts/build-n8n.mjs) ----------------------\n// Checks and cleans what the AI returns before it is stored.\n\nconst ACTION_TYPES = ['update_daily_budget', 'pause_campaign', 'resume_campaign'];\n\n// Hard rule 6: calm tone, plain hyphens, no emoji.\nfunction cleanText(text) {\n  return String(text || '')\n    .replace(/[‒-―−]/g, '-')\n    .replace(/[‘’]/g, \"'\")\n    .replace(/[“”]/g, '\"')\n    .replace(/\\p{Extended_Pictographic}️?/gu, '')\n    .replace(/[ \\t]+\\n/g, '\\n')\n    .trim();\n}\n\n// Only the three reference action types survive; anything else becomes null.\n// daily_budget is in the account currency.\nfunction normalizeAction(a) {\n  if (!a || typeof a !== 'object' || !ACTION_TYPES.includes(a.action_type)) return null;\n  const out = { action_type: a.action_type, daily_budget: null, reason: cleanText(a.reason || '').slice(0, 300) };\n  if (a.action_type === 'update_daily_budget') {\n    const n = Number(a.daily_budget);\n    if (!(n > 0 && n < 100000)) return null;\n    out.daily_budget = Math.round(n * 100) / 100;\n  }\n  return out;\n}\n\nconst money = (micros) => Math.round(Number(micros || 0) / 1e4) / 100;\nconst pct = (v) => (v === null || v === undefined ? 'n/a' : `${Math.round(Number(v) * 100)}%`);\n// ---- end shared/ai.js -------------------------------------------------------\n\n// AI Agent output -> campaign_chat_messages rows (is_proactive = true).\n// Matched to its campaign with itemMatching(i); falls back to position only if\n// the agent node did not keep the paired-item link. A malformed output\n// ({ output: null }) or an error item from onError: continueRegularOutput is\n// treated as \"nothing to post\" (reference lesson).\nconst inputs = $input.all();\nconst rows = [];\n\ninputs.forEach((item, i) => {\n  let ctx = null;\n  try {\n    ctx = $('Prepare suggestion inputs').itemMatching(i).json;\n  } catch (e) {\n    ctx = ($('Prepare suggestion inputs').all()[i] || {}).json || null;\n  }\n  const out = item.json && item.json.output;\n  if (!ctx || item.json.error || !out || !out.should_post || !out.message) return;\n  const action = normalizeAction(out.proposed_action);\n  rows.push({\n    customer_id: ctx.customer_id,\n    campaign_id: ctx.campaign_id,\n    role: 'assistant',\n    content: cleanText(out.message).slice(0, 3000),\n    proposed_action: action,\n    action_status: action ? 'proposed' : null,\n    is_proactive: true,\n  });\n});\n\nreturn [{ json: { rows, count: rows.length } }];\n"
+      }
+    },
+    {
+      "id": "6cd49639-521a-42a0-a994-31a2b5f8a11c",
+      "name": "Post suggestions?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        7480,
+        1400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "732b5cc0-f86e-4c6f-b2db-78af0fbdc089",
+              "leftValue": "={{ $json.count > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "acc5068c-6044-4785-a2a3-72369e1b04f9",
+      "name": "Post suggestions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        7700,
+        1400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/campaign_chat_messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.rows) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Suggest (AI Agent) - OpenAI model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Suggest (AI Agent)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Suggest (AI Agent) - output format": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Suggest (AI Agent)",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: daily 06:00": {
+      "main": [
+        [
+          {
+            "node": "Trigger: daily",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger: daily": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: weekly Sunday 07:00": {
+      "main": [
+        [
+          {
+            "node": "Trigger: weekly",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger: weekly": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Manual run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual run?": {
+      "main": [
+        [
+          {
+            "node": "Auth: read token",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Start sync run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: read token": {
+      "main": [
+        [
+          {
+            "node": "Auth: verify token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: verify token": {
+      "main": [
+        [
+          {
+            "node": "Auth: load profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: load profile": {
+      "main": [
+        [
+          {
+            "node": "Auth: check role",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: check role": {
+      "main": [
+        [
+          {
+            "node": "Auth: allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: allowed?": {
+      "main": [
+        [
+          {
+            "node": "Respond: accepted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: denied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond: accepted": {
+      "main": [
+        [
+          {
+            "node": "Start sync run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start sync run": {
+      "main": [
+        [
+          {
+            "node": "Refresh Google token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refresh Google token": {
+      "main": [
+        [
+          {
+            "node": "Get MCC accounts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get MCC accounts": {
+      "main": [
+        [
+          {
+            "node": "Build account upserts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build account upserts": {
+      "main": [
+        [
+          {
+            "node": "Upsert accounts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert accounts": {
+      "main": [
+        [
+          {
+            "node": "Get accounts to sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get accounts to sync": {
+      "main": [
+        [
+          {
+            "node": "Prepare account list",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare account list": {
+      "main": [
+        [
+          {
+            "node": "Any accounts?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any accounts?": {
+      "main": [
+        [
+          {
+            "node": "Loop over accounts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load run results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop over accounts": {
+      "main": [
+        [
+          {
+            "node": "Load run results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Account: refresh token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Account: refresh token": {
+      "main": [
+        [
+          {
+            "node": "Account: build queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Account: build queries": {
+      "main": [
+        [
+          {
+            "node": "Google Ads search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Ads search": {
+      "main": [
+        [
+          {
+            "node": "Map and plan writes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map and plan writes": {
+      "main": [
+        [
+          {
+            "node": "Write rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write rows": {
+      "main": [
+        [
+          {
+            "node": "Finish account",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finish account": {
+      "main": [
+        [
+          {
+            "node": "Account cleanup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Account cleanup": {
+      "main": [
+        [
+          {
+            "node": "Loop over accounts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load run results": {
+      "main": [
+        [
+          {
+            "node": "Summarize run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize run": {
+      "main": [
+        [
+          {
+            "node": "Close sync run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Close sync run": {
+      "main": [
+        [
+          {
+            "node": "Get missing geo names",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get missing geo names": {
+      "main": [
+        [
+          {
+            "node": "Build geo query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build geo query": {
+      "main": [
+        [
+          {
+            "node": "Geo lookup needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Geo lookup needed?": {
+      "main": [
+        [
+          {
+            "node": "Refresh token (geo)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "After geo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refresh token (geo)": {
+      "main": [
+        [
+          {
+            "node": "Search geo names",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search geo names": {
+      "main": [
+        [
+          {
+            "node": "Map geo names",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map geo names": {
+      "main": [
+        [
+          {
+            "node": "Upsert geo names",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert geo names": {
+      "main": [
+        [
+          {
+            "node": "After geo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "After geo": {
+      "main": [
+        [
+          {
+            "node": "Get alerts",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get suggestion candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get alerts": {
+      "main": [
+        [
+          {
+            "node": "Build Slack note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Slack note": {
+      "main": [
+        [
+          {
+            "node": "Send Slack note?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Slack note?": {
+      "main": [
+        [
+          {
+            "node": "Send Slack note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get suggestion candidates": {
+      "main": [
+        [
+          {
+            "node": "Prepare suggestion inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare suggestion inputs": {
+      "main": [
+        [
+          {
+            "node": "Anything to review?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything to review?": {
+      "main": [
+        [
+          {
+            "node": "Suggest (AI Agent)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Suggest (AI Agent)": {
+      "main": [
+        [
+          {
+            "node": "Prepare suggestions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare suggestions": {
+      "main": [
+        [
+          {
+            "node": "Post suggestions?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post suggestions?": {
+      "main": [
+        [
+          {
+            "node": "Post suggestions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

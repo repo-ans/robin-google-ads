@@ -1,0 +1,502 @@
+{
+  "name": "ff-geo-target-suggest",
+  "nodes": [
+    {
+      "id": "014dffdd-8303-4d71-afa8-f7078f1736c4",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "ff-geo-target-suggest",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ff/geo-target-suggest",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "http://localhost:5173"
+        }
+      },
+      "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
+    },
+    {
+      "id": "c45a511f-2fb9-4eb2-8092-aa4b62154cc3",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ff-geo-target-suggest: location autocomplete for the campaign builder (reference geo-target-suggest). Read only.\n// Non-secret settings. Secrets are n8n credentials (see the workflow notes);\n// the Supabase service role key is only in \"FF Supabase (service role)\".\nconst SETTINGS = {\n  \"SUPABASE_URL\": \"https://SET-ME.supabase.co\",\n  \"SUPABASE_ANON_KEY\": \"SET-ME\",\n  \"ALLOWED_ROLES\": [\n    \"rob_admin\",\n    \"ff_staff\"\n  ],\n  \"GOOGLE_ADS_API_VERSION\": \"v25\"\n};\n\nconst src = $input.first().json || {};\nreturn [{ json: { ...SETTINGS, body: src.body && typeof src.body === 'object' ? src.body : {} } }];\n"
+      },
+      "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
+    },
+    {
+      "id": "5f6f40a4-657f-495c-acb3-58ccc4636c14",
+      "parameters": {
+        "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
+      },
+      "name": "Auth: read token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
+    },
+    {
+      "id": "afc93453-283e-4e77-b190-1b28c5171367",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Config').first().json.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token || 'missing' }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: verify token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        300
+      ],
+      "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
+    },
+    {
+      "id": "b6ca37ad-28ae-43b2-b118-8a10c5ecb9f7",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "=eq.{{ (($json.statusCode === 200 && $json.body && /^[0-9a-f-]{36}$/.test($json.body.id)) ? $json.body.id : '00000000-0000-0000-0000-000000000000') }}"
+            },
+            {
+              "name": "select",
+              "value": "user_id,email,role,client_id,disabled"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: load profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
+    },
+    {
+      "id": "c7025f43-edb8-4918-ba07-58070bea12ff",
+      "parameters": {
+        "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
+      },
+      "name": "Auth: check role",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ],
+      "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
+    },
+    {
+      "id": "df602ce6-5cc9-490f-8a3a-54904ebe2ab7",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "a1b2c3d4-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Auth: allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ]
+    },
+    {
+      "id": "32c304cf-5ea3-410f-946e-3c4b02271877",
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "name": "Respond: denied",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        500
+      ],
+      "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
+    },
+    {
+      "id": "d0dd5495-d585-4a93-a669-e9977fb843f1",
+      "name": "Validate input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/input.js (included by scripts/build-n8n.mjs) -------------------\n// Webhook input helpers. The caller always comes from the Auth check block,\n// never from the request body.\nconst UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst CUSTOMER_RE = /^[0-9]{10}$/;\nconst ZERO_UUID = '00000000-0000-0000-0000-000000000000';\n\nconst requestBody = () => {\n  const b = $('Config').first().json.body;\n  return b && typeof b === 'object' ? b : {};\n};\nconst caller = () => $('Auth: check role').first().json.user;\nconst isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);\nconst customerId = (v) => {\n  const d = String(v === undefined || v === null ? '' : v).replace(/-/g, '');\n  return CUSTOMER_RE.test(d) ? d : null;\n};\nconst text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');\n\n// Every \"result\" item carries { status, body } for the generic Respond node.\nconst reject = (status, error) => [{ json: { valid: false, status, body: { error } } }];\nconst reply = (status, body) => [{ json: { status, body } }];\n// ---- end shared/input.js ----------------------------------------------------\n\n// Body: { query: \"mount pleasant sc\", country?: \"US\" }\nconst b = requestBody();\nconst query = text(b.query, 80);\nif (query.length < 2) return reject(400, 'Type at least 2 characters.');\nconst country = typeof b.country === 'string' && /^[A-Za-z]{2}$/.test(b.country) ? b.country.toUpperCase() : null;\nreturn [{ json: { valid: true, query, country } }];\n"
+      }
+    },
+    {
+      "id": "dfaad8d2-1377-4991-a8d2-647735d00134",
+      "name": "Validate input ok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c25919b0-d131-4a8c-a20f-431b04eb2efc",
+              "leftValue": "={{ $json.valid === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "aa622673-fc4f-431b-9024-8d9481400220",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2200,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.body ?? {}) }}",
+        "options": {
+          "responseCode": "={{ $json.status || 200 }}"
+        }
+      }
+    },
+    {
+      "id": "da5b529a-a6ce-42a0-a32f-bc1154c5434b",
+      "name": "Refresh Google token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "",
+          "name": "FF Google OAuth refresh"
+        }
+      },
+      "notes": "OAuth refresh. client_id, client_secret and refresh_token come from the Custom Auth credential 'FF Google OAuth refresh' - never from code or Supabase."
+    },
+    {
+      "id": "7d6be4eb-9883-4cba-a984-d0fdde5be27d",
+      "name": "Suggest locations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://googleads.googleapis.com/{{ $('Config').first().json.GOOGLE_ADS_API_VERSION }}/geoTargetConstants:suggest",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify(Object.assign({ \"Authorization\": \"Bearer \" + ($('Refresh Google token').first().json.access_token || 'missing'), \"Content-Type\": \"application/json\" }, null ? { \"login-customer-id\": null } : {})) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify(Object.assign({ locationNames: { names: [$('Validate input').first().json.query] }, locale: 'en' }, $('Validate input').first().json.country ? { countryCode: $('Validate input').first().json.country } : {})) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "",
+          "name": "FF Google Ads developer token"
+        }
+      },
+      "notes": "geoTargetConstants:suggest is global - no customer id and no login-customer-id."
+    },
+    {
+      "id": "c4851e2b-ccf8-41e6-b730-24ed6507860a",
+      "name": "Format suggestions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/gads.js (included by scripts/build-n8n.mjs) -------------------\n// Reading Google Ads REST responses from an HTTP Request node that has\n// \"Full response\" on (and usually \"Never error\"), with the body as text or JSON.\n\nfunction gadsBody(r) {\n  let body = r && (r.body !== undefined ? r.body : r.data);\n  if (typeof body === 'string') {\n    try {\n      body = body ? JSON.parse(body) : null;\n    } catch (e) {\n      return { __unparsable: true };\n    }\n  }\n  return body;\n}\n\n// Human-readable error from a failed call, or null when it succeeded.\nfunction gadsError(r) {\n  if (!r) return 'no response';\n  if (r.error && r.statusCode === undefined) return String(r.error.message || JSON.stringify(r.error)).slice(0, 500);\n  if (r.statusCode >= 200 && r.statusCode < 300) return null;\n  const body = gadsBody(r);\n  const first = Array.isArray(body) ? body[0] : body;\n  const err = first && first.error;\n  const detail = err && err.details && err.details[0] && err.details[0].errors && err.details[0].errors[0];\n  const code = detail && detail.errorCode ? ` [${Object.values(detail.errorCode).join(',')}]` : '';\n  return `${r.statusCode} ${(detail && detail.message) || (err && err.message) || 'error'}${code}`.slice(0, 500);\n}\n\n// searchStream / search -> { rows } or { error }.\nfunction parseStream(r) {\n  const error = gadsError(r);\n  if (error) return { error };\n  const body = gadsBody(r);\n  if (body && body.__unparsable) return { error: 'response was not JSON' };\n  const rows = [];\n  for (const batch of Array.isArray(body) ? body : [body]) {\n    for (const row of (batch && batch.results) || []) rows.push(row);\n  }\n  return { rows };\n}\n// ---- end shared/gads.js -----------------------------------------------------\n\n// ---- shared/input.js (included by scripts/build-n8n.mjs) -------------------\n// Webhook input helpers. The caller always comes from the Auth check block,\n// never from the request body.\nconst UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst CUSTOMER_RE = /^[0-9]{10}$/;\nconst ZERO_UUID = '00000000-0000-0000-0000-000000000000';\n\nconst requestBody = () => {\n  const b = $('Config').first().json.body;\n  return b && typeof b === 'object' ? b : {};\n};\nconst caller = () => $('Auth: check role').first().json.user;\nconst isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);\nconst customerId = (v) => {\n  const d = String(v === undefined || v === null ? '' : v).replace(/-/g, '');\n  return CUSTOMER_RE.test(d) ? d : null;\n};\nconst text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');\n\n// Every \"result\" item carries { status, body } for the generic Respond node.\nconst reject = (status, error) => [{ json: { valid: false, status, body: { error } } }];\nconst reply = (status, body) => [{ json: { status, body } }];\n// ---- end shared/input.js ----------------------------------------------------\n\n// geoTargetConstants:suggest -> up to 10 distinct suggestions (reference\n// \"Format suggestions\"). canonical_name is fully qualified, e.g.\n// \"Mount Pleasant,South Carolina,United States\", so builds resolve it exactly.\nconst r = $input.first().json || {};\nconst error = gadsError(r);\nif (error) return reply(502, { error: `Google Ads could not suggest locations: ${error}` });\n\nconst body = gadsBody(r) || {};\nconst seen = new Set();\nconst suggestions = [];\nfor (const s of body.geoTargetConstantSuggestions || []) {\n  const g = s.geoTargetConstant;\n  if (!g || !g.resourceName || seen.has(g.resourceName)) continue;\n  seen.add(g.resourceName);\n  suggestions.push({\n    resource_name: g.resourceName,\n    name: g.name || '',\n    canonical_name: g.canonicalName || g.name || '',\n    country_code: g.countryCode || null,\n    target_type: g.targetType || null,\n    reach: s.reach ? Number(s.reach) : null,\n  });\n  if (suggestions.length >= 10) break;\n}\nreturn reply(200, { suggestions });\n"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Auth: read token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: read token": {
+      "main": [
+        [
+          {
+            "node": "Auth: verify token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: verify token": {
+      "main": [
+        [
+          {
+            "node": "Auth: load profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: load profile": {
+      "main": [
+        [
+          {
+            "node": "Auth: check role",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: check role": {
+      "main": [
+        [
+          {
+            "node": "Auth: allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: allowed?": {
+      "main": [
+        [
+          {
+            "node": "Validate input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: denied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate input": {
+      "main": [
+        [
+          {
+            "node": "Validate input ok?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate input ok?": {
+      "main": [
+        [
+          {
+            "node": "Refresh Google token",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refresh Google token": {
+      "main": [
+        [
+          {
+            "node": "Suggest locations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Suggest locations": {
+      "main": [
+        [
+          {
+            "node": "Format suggestions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format suggestions": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

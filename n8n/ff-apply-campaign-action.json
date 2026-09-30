@@ -1,0 +1,818 @@
+{
+  "name": "ff-apply-campaign-action",
+  "nodes": [
+    {
+      "id": "3eff01e3-836d-4dad-8afe-c463b581542a",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "ff-apply-campaign-action",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ff/apply-campaign-action",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "http://localhost:5173"
+        }
+      },
+      "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
+    },
+    {
+      "id": "e9c1b8df-f757-40c8-87a9-dc303d10cff4",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ff-apply-campaign-action: Confirm & Apply for a proposed budget / pause / resume (reference apply-campaign-action). rob_admin only; test account or writes_enabled; validateOnly first; every attempt logged in write_log.\n// Non-secret settings. Secrets are n8n credentials (see the workflow notes);\n// the Supabase service role key is only in \"FF Supabase (service role)\".\nconst SETTINGS = {\n  \"SUPABASE_URL\": \"https://SET-ME.supabase.co\",\n  \"SUPABASE_ANON_KEY\": \"SET-ME\",\n  \"ALLOWED_ROLES\": [\n    \"rob_admin\"\n  ],\n  \"GOOGLE_ADS_API_VERSION\": \"v25\"\n};\n\nconst src = $input.first().json || {};\nreturn [{ json: { ...SETTINGS, body: src.body && typeof src.body === 'object' ? src.body : {} } }];\n"
+      },
+      "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
+    },
+    {
+      "id": "752da479-e71b-48f3-a6a3-be1130b9003b",
+      "parameters": {
+        "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
+      },
+      "name": "Auth: read token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
+    },
+    {
+      "id": "d2c917c5-0ff3-4231-87d7-be9973fbd822",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Config').first().json.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token || 'missing' }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: verify token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        300
+      ],
+      "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
+    },
+    {
+      "id": "d1efb8b2-da27-4238-9a0c-5475fec48abb",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "=eq.{{ (($json.statusCode === 200 && $json.body && /^[0-9a-f-]{36}$/.test($json.body.id)) ? $json.body.id : '00000000-0000-0000-0000-000000000000') }}"
+            },
+            {
+              "name": "select",
+              "value": "user_id,email,role,client_id,disabled"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: load profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
+    },
+    {
+      "id": "bad97843-40c6-4648-8f0d-88498d76d4cb",
+      "parameters": {
+        "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
+      },
+      "name": "Auth: check role",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ],
+      "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
+    },
+    {
+      "id": "bf47ed83-45c6-4632-9367-6edb186c8c01",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "a1b2c3d4-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Auth: allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ]
+    },
+    {
+      "id": "1bbf121f-adc4-46e0-9d50-fd72fc94092b",
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "name": "Respond: denied",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        500
+      ],
+      "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
+    },
+    {
+      "id": "7f82b754-27a8-4626-87a3-45f90196e5a9",
+      "name": "Validate input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/input.js (included by scripts/build-n8n.mjs) -------------------\n// Webhook input helpers. The caller always comes from the Auth check block,\n// never from the request body.\nconst UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst CUSTOMER_RE = /^[0-9]{10}$/;\nconst ZERO_UUID = '00000000-0000-0000-0000-000000000000';\n\nconst requestBody = () => {\n  const b = $('Config').first().json.body;\n  return b && typeof b === 'object' ? b : {};\n};\nconst caller = () => $('Auth: check role').first().json.user;\nconst isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);\nconst customerId = (v) => {\n  const d = String(v === undefined || v === null ? '' : v).replace(/-/g, '');\n  return CUSTOMER_RE.test(d) ? d : null;\n};\nconst text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');\n\n// Every \"result\" item carries { status, body } for the generic Respond node.\nconst reject = (status, error) => [{ json: { valid: false, status, body: { error } } }];\nconst reply = (status, body) => [{ json: { status, body } }];\n// ---- end shared/input.js ----------------------------------------------------\n\n// Body: { source: \"chat\" | \"message\", source_id }\n// Only the row id comes from the browser. The action itself is read from the\n// database (the reference trusted the browser's copy of proposed_action).\nconst b = requestBody();\nif (!['chat', 'message'].includes(b.source)) return reject(400, 'source must be chat or message.');\nif (!isUuid(b.source_id)) return reject(400, 'source_id is missing or not valid.');\nreturn [{ json: { valid: true, source: b.source, source_id: b.source_id } }];\n"
+      }
+    },
+    {
+      "id": "04a53444-7bd3-4317-a2d2-151a1982f0ee",
+      "name": "Validate input ok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "589311a6-b365-4d8d-bf0e-a85934514bd8",
+              "leftValue": "={{ $json.valid === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "36c6a83a-d3bb-44d2-a994-132fea27310f",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2200,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.body ?? {}) }}",
+        "options": {
+          "responseCode": "={{ $json.status || 200 }}"
+        }
+      }
+    },
+    {
+      "id": "2a07401f-1fa7-4bd4-8032-8a7a58ef2cfe",
+      "name": "Get action context",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/rpc/ff_action_context",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_source: $json.source, p_source_id: $json.source_id }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      }
+    },
+    {
+      "id": "7afa3af7-c404-4156-bead-7bf4982a8396",
+      "name": "Plan change",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/ai.js (included by scripts/build-n8n.mjs) ----------------------\n// Checks and cleans what the AI returns before it is stored.\n\nconst ACTION_TYPES = ['update_daily_budget', 'pause_campaign', 'resume_campaign'];\n\n// Hard rule 6: calm tone, plain hyphens, no emoji.\nfunction cleanText(text) {\n  return String(text || '')\n    .replace(/[‒-―−]/g, '-')\n    .replace(/[‘’]/g, \"'\")\n    .replace(/[“”]/g, '\"')\n    .replace(/\\p{Extended_Pictographic}️?/gu, '')\n    .replace(/[ \\t]+\\n/g, '\\n')\n    .trim();\n}\n\n// Only the three reference action types survive; anything else becomes null.\n// daily_budget is in the account currency.\nfunction normalizeAction(a) {\n  if (!a || typeof a !== 'object' || !ACTION_TYPES.includes(a.action_type)) return null;\n  const out = { action_type: a.action_type, daily_budget: null, reason: cleanText(a.reason || '').slice(0, 300) };\n  if (a.action_type === 'update_daily_budget') {\n    const n = Number(a.daily_budget);\n    if (!(n > 0 && n < 100000)) return null;\n    out.daily_budget = Math.round(n * 100) / 100;\n  }\n  return out;\n}\n\nconst money = (micros) => Math.round(Number(micros || 0) / 1e4) / 100;\nconst pct = (v) => (v === null || v === undefined ? 'n/a' : `${Math.round(Number(v) * 100)}%`);\n// ---- end shared/ai.js -------------------------------------------------------\n\n// Builds the Google Ads change for a proposed action, after the guards:\n//   - the action is still \"proposed\" (applied or dismissed ones cannot run twice)\n//   - write gate: the account is a Google Ads test account, or rob_admin has\n//     turned writes on for this client (Rob's SOP: test account first)\n//   - a shared budget is never changed from one campaign\n//   - pause only an enabled campaign, resume only a paused one\n// Output { ok: false, status, error } stops here; the refusal is logged.\nconst cfg = $('Config').first().json;\nconst v = $('Validate input').first().json;\nconst ctx = $input.first().json || {};\n\nconst refuse = (status, error) => [{ json: { ok: false, status, error, ctx } }];\n\nif (!ctx.found) return refuse(404, 'That proposed change was not found.');\nif (ctx.action_status !== 'proposed') return refuse(409, `This change is already ${ctx.action_status || 'closed'}.`);\nconst action = normalizeAction(ctx.proposed_action);\nif (!action) return refuse(422, 'The proposed change is not one of the supported actions.');\nif (!ctx.campaign_row_id) return refuse(404, 'The campaign is no longer in the dashboard.');\nif (!ctx.is_test_account && !ctx.writes_enabled) {\n  return refuse(403, 'Writes are not turned on for this client yet. Test on the Google Ads test account first, then Rob can turn writes on in the client settings.');\n}\n\nconst cid = ctx.customer_id;\nlet urlSuffix;\nlet operation;\nlet campaignPatch;\nif (action.action_type === 'update_daily_budget') {\n  if (!ctx.budget_id) return refuse(422, 'This campaign has no budget on file. Run a sync first.');\n  if (ctx.budget_shared) return refuse(422, 'This campaign uses a shared budget. Change it in Google Ads so other campaigns are not affected by surprise.');\n  const micros = Math.round(action.daily_budget * 1e6);\n  urlSuffix = 'campaignBudgets:mutate';\n  operation = {\n    update: { resourceName: `customers/${cid}/campaignBudgets/${ctx.budget_id}`, amountMicros: String(micros) },\n    updateMask: 'amountMicros',\n  };\n  campaignPatch = { budget_micros: micros };\n} else {\n  const target = action.action_type === 'pause_campaign' ? 'PAUSED' : 'ENABLED';\n  if (action.action_type === 'pause_campaign' && ctx.campaign_status !== 'ENABLED') return refuse(409, 'The campaign is not running.');\n  if (action.action_type === 'resume_campaign' && ctx.campaign_status !== 'PAUSED') return refuse(409, 'The campaign is not paused.');\n  urlSuffix = 'campaigns:mutate';\n  operation = {\n    update: { resourceName: `customers/${cid}/campaigns/${ctx.campaign_id}`, status: target },\n    updateMask: 'status',\n  };\n  campaignPatch = { status: target };\n}\n\nreturn [{\n  json: {\n    ok: true,\n    ctx,\n    action,\n    customer_id: cid,\n    login_customer_id: ctx.login_customer_id || null,\n    api_version: cfg.GOOGLE_ADS_API_VERSION,\n    url_suffix: urlSuffix,\n    mutate_body: { operations: [operation] },\n    campaign_patch: campaignPatch,\n    source: v.source,\n    source_id: v.source_id,\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "11a305a5-9aac-414c-94bb-46ea3af417d7",
+      "name": "Allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "af2a1744-9d56-4dec-9c1a-588d87b0f1f2",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "4ac7d606-d728-44ee-b963-2228523f5dfb",
+      "name": "Refresh Google token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "",
+          "name": "FF Google OAuth refresh"
+        }
+      },
+      "notes": "OAuth refresh. client_id, client_secret and refresh_token come from the Custom Auth credential 'FF Google OAuth refresh' - never from code or Supabase."
+    },
+    {
+      "id": "5f9ab1e3-88ea-4e90-9e8f-eb592e883c93",
+      "name": "Validate change",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://googleads.googleapis.com/{{ $('Config').first().json.GOOGLE_ADS_API_VERSION }}/customers/{{ $('Plan change').first().json.customer_id }}/{{ $('Plan change').first().json.url_suffix }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify(Object.assign({ \"Authorization\": \"Bearer \" + ($('Refresh Google token').first().json.access_token || 'missing'), \"Content-Type\": \"application/json\" }, $('Plan change').first().json.login_customer_id ? { \"login-customer-id\": $('Plan change').first().json.login_customer_id } : {})) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify(Object.assign({}, $('Plan change').first().json.mutate_body, { validateOnly: true })) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "",
+          "name": "FF Google Ads developer token"
+        }
+      },
+      "notes": "validateOnly: Google checks the change without making it."
+    },
+    {
+      "id": "4ca0c991-f798-4c8b-95bb-a90732e4400c",
+      "name": "Check validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/gads.js (included by scripts/build-n8n.mjs) -------------------\n// Reading Google Ads REST responses from an HTTP Request node that has\n// \"Full response\" on (and usually \"Never error\"), with the body as text or JSON.\n\nfunction gadsBody(r) {\n  let body = r && (r.body !== undefined ? r.body : r.data);\n  if (typeof body === 'string') {\n    try {\n      body = body ? JSON.parse(body) : null;\n    } catch (e) {\n      return { __unparsable: true };\n    }\n  }\n  return body;\n}\n\n// Human-readable error from a failed call, or null when it succeeded.\nfunction gadsError(r) {\n  if (!r) return 'no response';\n  if (r.error && r.statusCode === undefined) return String(r.error.message || JSON.stringify(r.error)).slice(0, 500);\n  if (r.statusCode >= 200 && r.statusCode < 300) return null;\n  const body = gadsBody(r);\n  const first = Array.isArray(body) ? body[0] : body;\n  const err = first && first.error;\n  const detail = err && err.details && err.details[0] && err.details[0].errors && err.details[0].errors[0];\n  const code = detail && detail.errorCode ? ` [${Object.values(detail.errorCode).join(',')}]` : '';\n  return `${r.statusCode} ${(detail && detail.message) || (err && err.message) || 'error'}${code}`.slice(0, 500);\n}\n\n// searchStream / search -> { rows } or { error }.\nfunction parseStream(r) {\n  const error = gadsError(r);\n  if (error) return { error };\n  const body = gadsBody(r);\n  if (body && body.__unparsable) return { error: 'response was not JSON' };\n  const rows = [];\n  for (const batch of Array.isArray(body) ? body : [body]) {\n    for (const row of (batch && batch.results) || []) rows.push(row);\n  }\n  return { rows };\n}\n// ---- end shared/gads.js -----------------------------------------------------\n\nconst r = $input.first().json || {};\nconst already = false;\nreturn [{ json: { ok: already || !gadsError(r), error: gadsError(r) } }];\n// checks: Validate change"
+      }
+    },
+    {
+      "id": "91036ab6-2dba-490d-ab18-89d46736c7db",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "a3777224-725b-4b7e-b6c0-60de2bdc440d",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e052bdd9-df4e-4722-9593-2f3cf40507b1",
+      "name": "Apply change",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3740,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://googleads.googleapis.com/{{ $('Config').first().json.GOOGLE_ADS_API_VERSION }}/customers/{{ $('Plan change').first().json.customer_id }}/{{ $('Plan change').first().json.url_suffix }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify(Object.assign({ \"Authorization\": \"Bearer \" + ($('Refresh Google token').first().json.access_token || 'missing'), \"Content-Type\": \"application/json\" }, $('Plan change').first().json.login_customer_id ? { \"login-customer-id\": $('Plan change').first().json.login_customer_id } : {})) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Plan change').first().json.mutate_body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "",
+          "name": "FF Google Ads developer token"
+        }
+      },
+      "notes": "The real change. Only reached after the guards and a clean validateOnly call."
+    },
+    {
+      "id": "dde556fd-8b23-4ac2-b646-fa93053abb44",
+      "name": "Plan records",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/gads.js (included by scripts/build-n8n.mjs) -------------------\n// Reading Google Ads REST responses from an HTTP Request node that has\n// \"Full response\" on (and usually \"Never error\"), with the body as text or JSON.\n\nfunction gadsBody(r) {\n  let body = r && (r.body !== undefined ? r.body : r.data);\n  if (typeof body === 'string') {\n    try {\n      body = body ? JSON.parse(body) : null;\n    } catch (e) {\n      return { __unparsable: true };\n    }\n  }\n  return body;\n}\n\n// Human-readable error from a failed call, or null when it succeeded.\nfunction gadsError(r) {\n  if (!r) return 'no response';\n  if (r.error && r.statusCode === undefined) return String(r.error.message || JSON.stringify(r.error)).slice(0, 500);\n  if (r.statusCode >= 200 && r.statusCode < 300) return null;\n  const body = gadsBody(r);\n  const first = Array.isArray(body) ? body[0] : body;\n  const err = first && first.error;\n  const detail = err && err.details && err.details[0] && err.details[0].errors && err.details[0].errors[0];\n  const code = detail && detail.errorCode ? ` [${Object.values(detail.errorCode).join(',')}]` : '';\n  return `${r.statusCode} ${(detail && detail.message) || (err && err.message) || 'error'}${code}`.slice(0, 500);\n}\n\n// searchStream / search -> { rows } or { error }.\nfunction parseStream(r) {\n  const error = gadsError(r);\n  if (error) return { error };\n  const body = gadsBody(r);\n  if (body && body.__unparsable) return { error: 'response was not JSON' };\n  const rows = [];\n  for (const batch of Array.isArray(body) ? body : [body]) {\n    for (const row of (batch && batch.results) || []) rows.push(row);\n  }\n  return { rows };\n}\n// ---- end shared/gads.js -----------------------------------------------------\n\n// Runs after any outcome: refused by the guards, rejected by Google's\n// validate-only call, failed, or applied. Emits the Supabase writes\n// (write_log always; campaign + source row only on success) and carries the\n// webhook answer in `respond`.\nconst plan = $('Plan change').first().json;\nconst user = $('Auth: check role').first().json.user;\nconst ran = (name) => {\n  try {\n    return $(name).first().json;\n  } catch (e) {\n    return null; // node did not run on this path\n  }\n};\nconst validation = ran('Validate change');\nconst applied = ran('Apply change');\nconst ctx = plan.ctx || {};\nconst NOOP = { method: 'GET', path: 'clients?select=id&limit=0', body: null };\n\nconst logRow = (validateOnly, status, response) => ({\n  actor_id: user.user_id,\n  actor_role: user.role,\n  customer_id: ctx.customer_id,\n  is_test_account: Boolean(ctx.is_test_account),\n  workflow: 'ff-apply-campaign-action',\n  operation: (plan.action && plan.action.action_type) || (ctx.proposed_action && ctx.proposed_action.action_type) || 'unknown',\n  validate_only: validateOnly,\n  request: plan.mutate_body || { proposed_action: ctx.proposed_action || null },\n  response,\n  status,\n});\nconst out = (writes, respond) => (writes.length ? writes : [NOOP]).map((w) => ({ json: { ...w, respond } }));\nconst logWrite = (rows) => ({ method: 'POST', path: 'write_log', prefer: 'return=minimal', body: rows });\n\nif (!plan.ok) {\n  const writes = ctx.customer_id ? [logWrite([logRow(false, 'refused', { error: plan.error })])] : [];\n  return out(writes, { status: plan.status, body: { error: plan.error } });\n}\n\nconst validateError = gadsError(validation);\nif (validateError) {\n  return out([logWrite([logRow(true, 'failed', { error: validateError })])],\n    { status: 422, body: { error: `Google Ads rejected the change: ${validateError}` } });\n}\n\nconst applyError = gadsError(applied);\nconst validatedRow = logRow(true, 'ok', gadsBody(validation));\nif (applyError) {\n  return out([logWrite([validatedRow, logRow(false, 'failed', { error: applyError })])],\n    { status: 502, body: { error: `The change passed validation but Google Ads did not apply it: ${applyError}` } });\n}\n\nconst sourcePath = plan.source === 'chat'\n  ? `campaign_chat_messages?id=eq.${plan.source_id}&action_status=eq.proposed`\n  : `message_drafts?message_id=eq.${plan.source_id}&action_status=eq.proposed`;\n\nreturn out([\n  logWrite([validatedRow, logRow(false, 'ok', gadsBody(applied))]),\n  // Write the new value straight back so the dashboard is right before the next\n  // sync (reference fix: \"applied a $2 budget, dashboard still showed $1\").\n  { method: 'PATCH', path: `campaigns?customer_id=eq.${ctx.customer_id}&campaign_id=eq.${ctx.campaign_id}`,\n    prefer: 'return=minimal', body: plan.campaign_patch },\n  { method: 'PATCH', path: sourcePath, prefer: 'return=minimal', body: { action_status: 'applied' } },\n], { status: 200, body: { ok: true, applied: plan.action } });\n"
+      }
+    },
+    {
+      "id": "966d102f-79cf-44bb-afb3-fecad4f22321",
+      "name": "Save records",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4180,
+        200
+      ],
+      "parameters": {
+        "method": "={{ $json.method }}",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/{{ $json.path }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "={{ $json.prefer || 'return=minimal' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body ?? {}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "write_log, plus the Supabase follow-up for a successful change."
+    },
+    {
+      "id": "3019750c-afd5-4692-b1d2-11e11b3b9bfc",
+      "name": "Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4400,
+        200
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: $('Plan records').first().json.respond }];"
+      },
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Auth: read token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: read token": {
+      "main": [
+        [
+          {
+            "node": "Auth: verify token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: verify token": {
+      "main": [
+        [
+          {
+            "node": "Auth: load profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: load profile": {
+      "main": [
+        [
+          {
+            "node": "Auth: check role",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: check role": {
+      "main": [
+        [
+          {
+            "node": "Auth: allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: allowed?": {
+      "main": [
+        [
+          {
+            "node": "Validate input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: denied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate input": {
+      "main": [
+        [
+          {
+            "node": "Validate input ok?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate input ok?": {
+      "main": [
+        [
+          {
+            "node": "Get action context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan records": {
+      "main": [
+        [
+          {
+            "node": "Save records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save records": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Result": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get action context": {
+      "main": [
+        [
+          {
+            "node": "Plan change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan change": {
+      "main": [
+        [
+          {
+            "node": "Allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Allowed?": {
+      "main": [
+        [
+          {
+            "node": "Refresh Google token",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Plan records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refresh Google token": {
+      "main": [
+        [
+          {
+            "node": "Validate change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate change": {
+      "main": [
+        [
+          {
+            "node": "Check validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check validation": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Apply change",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Plan records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply change": {
+      "main": [
+        [
+          {
+            "node": "Plan records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}
