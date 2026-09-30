@@ -1,14 +1,15 @@
 // Geo target constants that have no name yet (from ff_missing_geo_targets).
 // Emits exactly one item: { skip: true } when there is nothing to look up.
-const cfg = $('Config').first().json;
+const mccRaw = String($('Get Google Ads secrets').first().json.mcc_id || '').replace(/-/g, '');
+const MCC_ID = /^[0-9]{10}$/.test(mccRaw) ? mccRaw : '';
 const ids = $input
   .all()
   .map((i) => i.json && i.json.geo_target_constant)
   .filter((g) => typeof g === 'string' && /^geoTargetConstants\/[0-9]+$/.test(g));
 
 // geo_target_constant can be queried through any account; prefer the MCC.
-let customerId = cfg.MCC_ID || null;
-let loginCustomerId = cfg.MCC_ID || null;
+let customerId = MCC_ID || null;
+let loginCustomerId = MCC_ID || null;
 if (!customerId) {
   const first = $('Prepare account list').first().json;
   customerId = first.customer_id || null;

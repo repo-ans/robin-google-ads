@@ -2,7 +2,7 @@
   "name": "ff-campaign-chat",
   "nodes": [
     {
-      "id": "ab6f3861-b281-4771-8c0d-bf0906779779",
+      "id": "5e395389-be42-4875-aa1d-d8b03c2afb1e",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -22,7 +22,7 @@
       "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
     },
     {
-      "id": "53e576a7-dbc4-4c0d-96fc-ce167ff77694",
+      "id": "1ef06cdf-07ae-442a-bf98-5627e064730e",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -36,7 +36,7 @@
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
     },
     {
-      "id": "1c121e00-1c6a-400d-8b88-090949a59cb0",
+      "id": "0d3310cb-0d70-42a7-8121-6c99b287cab7",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -50,7 +50,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "8241e777-c36c-49cd-a233-316b88a1a956",
+      "id": "d74291e2-3b2c-45f2-a690-a02ce6ba3829",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -86,7 +86,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "50824bd4-e917-42d3-b1de-efe31bc156e8",
+      "id": "04875d3c-bd3a-4042-b9e3-0eec05ea2f32",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -131,7 +131,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "04fdc94f-cb77-4b01-9c84-7048dac82493",
+      "id": "e3ae0442-0276-4370-9eeb-0d474a318365",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -145,7 +145,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "b2b7abaa-53f9-4eae-9619-014be25cc0e8",
+      "id": "9a9b23fd-2c4c-4598-ba3c-a77066c4383e",
       "parameters": {
         "conditions": {
           "options": {
@@ -178,7 +178,7 @@
       ]
     },
     {
-      "id": "4fd3c4ee-122f-4477-b0c4-9a790e1cfa44",
+      "id": "cfa2badc-9500-476d-a59c-bafec7613ddb",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -196,7 +196,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "88eab519-4c5d-44ad-8680-252169ded627",
+      "id": "9d41fc3b-2ac5-4c6e-85f9-aaa69bd5ed2a",
       "name": "Validate input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -209,7 +209,7 @@
       }
     },
     {
-      "id": "0196e525-3a97-4b0b-beb3-75de5e3d0507",
+      "id": "769c39e7-f356-42c4-8879-fba0ce932225",
       "name": "Validate input ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -226,7 +226,7 @@
           },
           "conditions": [
             {
-              "id": "0c4ae477-9ba5-44a1-92d4-04b03fac2557",
+              "id": "906e83e1-690f-402e-a452-f3978fd9b40b",
               "leftValue": "={{ $json.valid === true }}",
               "rightValue": true,
               "operator": {
@@ -242,7 +242,7 @@
       }
     },
     {
-      "id": "79978dc8-e28d-4e51-9e3a-951d84161e0c",
+      "id": "0b2f095b-d360-4e6e-a583-43440e5e29ab",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -259,7 +259,7 @@
       }
     },
     {
-      "id": "ec43234d-5bba-442b-9a8f-e95238731ac1",
+      "id": "d81963bc-0566-426e-9f13-1c4ea7258530",
       "name": "Get campaign",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -283,7 +283,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "f4c97384-1457-4e59-9b1e-0e463aa6412c",
+      "id": "c8c24811-49f6-45fd-b588-caffc031a0fd",
       "name": "Route",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -296,7 +296,7 @@
       }
     },
     {
-      "id": "9ae5bc56-4b8c-4aa7-9703-a1354525d3f3",
+      "id": "37a4eaf4-ae06-4af3-b537-8cda615db1a1",
       "name": "Send message?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -313,7 +313,7 @@
           },
           "conditions": [
             {
-              "id": "53b9e903-5436-4c61-8645-01651857bdb2",
+              "id": "32b7060a-56d5-47b3-87fb-aec8b6d4eaa3",
               "leftValue": "={{ $json.route === 'send' }}",
               "rightValue": true,
               "operator": {
@@ -329,7 +329,7 @@
       }
     },
     {
-      "id": "c23268cd-012f-4e2b-a777-437f5b23d57d",
+      "id": "2685bdec-eea2-4662-8734-bbed854ca71b",
       "name": "Chat write?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -346,7 +346,7 @@
           },
           "conditions": [
             {
-              "id": "24fa78a3-9bfe-46de-b4e6-4e87128ad811",
+              "id": "3272129d-40af-4557-bbbf-59e615fb7fb6",
               "leftValue": "={{ $json.route === 'write' }}",
               "rightValue": true,
               "operator": {
@@ -362,7 +362,7 @@
       }
     },
     {
-      "id": "91b4071b-3b10-49c5-bc59-f0129c483f17",
+      "id": "8203b263-7a88-4356-aecf-1b0bc01bd17d",
       "name": "Chat write",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -405,7 +405,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "f8aea750-dd5c-405d-8bcb-f77cab161eba",
+      "id": "6f616838-469b-4c48-a8f0-2c78b09da0be",
       "name": "Write result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -418,7 +418,7 @@
       }
     },
     {
-      "id": "a5a589cf-3b76-422c-a6b1-be897d01e8b9",
+      "id": "19d5d605-9ca3-4232-a2f6-0750950d5e36",
       "name": "Save user message",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -453,7 +453,7 @@
       }
     },
     {
-      "id": "4709fb02-44dc-4a1a-b999-12729bce1ff4",
+      "id": "3ab3a177-5cac-4117-86f2-c948205668bb",
       "name": "Get chat context",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -479,7 +479,7 @@
       }
     },
     {
-      "id": "f613fda0-f780-4b50-94cf-bd65ea573b0f",
+      "id": "1d6fa915-dcdd-4c52-b0eb-be9847dbdad3",
       "name": "Build AI context",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -492,7 +492,7 @@
       }
     },
     {
-      "id": "c939aed7-722b-4666-8cb3-81916a89d904",
+      "id": "31e1dff5-8304-4997-be0d-2155dde17fb0",
       "name": "Chat (AI Agent)",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 1.7,
@@ -512,7 +512,7 @@
       "notes": "onError continueRegularOutput: a malformed model output must not stop the workflow (reference lesson). The next Code node treats it as no answer."
     },
     {
-      "id": "9a0309b1-0344-40ec-b18f-65473be204ad",
+      "id": "7a681083-4eb3-4966-b9f3-804eae64289b",
       "name": "Chat (AI Agent) - OpenAI model",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.3,
@@ -536,7 +536,7 @@
       }
     },
     {
-      "id": "b6b0c56e-232e-4684-aab6-e738c270174a",
+      "id": "90c0b22b-51f8-42c2-8e98-c827c7ba8fdf",
       "name": "Chat (AI Agent) - output format",
       "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
       "typeVersion": 1.2,
@@ -550,7 +550,7 @@
       }
     },
     {
-      "id": "aa4a6629-7c5c-4826-9893-0d3ea06e72e2",
+      "id": "9e8f946a-5e11-4259-b375-94e0cee752c8",
       "name": "Prepare assistant message",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -563,7 +563,7 @@
       }
     },
     {
-      "id": "c797f956-fa66-4aeb-9d5c-0c6f54725f14",
+      "id": "0c1d53e9-15ca-4025-bfe0-4937a2c87a7c",
       "name": "Save assistant message",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -598,7 +598,7 @@
       }
     },
     {
-      "id": "6d68c7b8-48eb-4753-931b-a04c1ad51c5f",
+      "id": "401cf813-bbc5-4a67-a1a5-297813796994",
       "name": "Chat reply",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,

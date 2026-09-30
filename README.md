@@ -12,7 +12,7 @@ Dashboard button -> n8n webhook (JWT + role check) -> Google Ads and/or Supabase
 |---|---|
 | `web/` | React + Vite + TypeScript dashboard (Netlify) |
 | `supabase/` | Migrations and RLS tests |
-| `n8n/` | 13 n8n workflow exports (`ff-*.json`), generated from `n8n/src/` |
+| `n8n/` | 14 n8n workflow exports (`ff-*.json`), generated from `n8n/src/` |
 | `scripts/` | n8n build and checks, Code node tests, DB and auth tests |
 | `audits/` | Audit reports downloaded from the dashboard (`<client-slug>.md`) |
 
@@ -41,17 +41,25 @@ Dashboard button -> n8n webhook (JWT + role check) -> Google Ads and/or Supabase
 | Name | Type | Value |
 |---|---|---|
 | FF Supabase (service role) | Supabase API | FF project URL + service role key |
-| FF Google OAuth refresh | Custom Auth | `{"body": {"client_id": "...", "client_secret": "...", "refresh_token": "...", "grant_type": "refresh_token"}}` |
-| FF Google Ads developer token | Custom Auth | `{"headers": {"developer-token": "..."}}` |
 | FF OpenAI | OpenAI | FF-owned API key |
 | FF Slack | Slack API | Bot token (optional - only for Slack notes) |
 | FF DataForSEO | Basic Auth | DataForSEO API login + API password |
+
+### Google Ads connection (dashboard, not n8n)
+
+Google Ads values are **not** n8n credentials. After the workflows are imported and active, Rob opens the
+dashboard **Settings > Google Ads API connection** and enters the developer token, MCC ID, OAuth Client ID and
+Client secret, then clicks **Connect with Google** (this creates the refresh token) and **Test connection**.
+The values are stored in Supabase `private.google_ads_secrets`: only n8n can read them; the page only shows
+"set / not set". For Connect with Google, add `<dashboard URL>/settings/google-callback` to the OAuth client's
+Authorized redirect URIs (Web application client) and set the consent screen to "In production".
+`scripts/get-google-refresh-token.mjs` is a fallback if Connect with Google cannot be used.
 
 ### Workflows
 
 Import each file in `n8n/` (Workflows > Import from File, or open the file, copy everything, paste on an empty canvas).
 In every workflow:
-- open **Config** and set `SUPABASE_URL` and `SUPABASE_ANON_KEY` (ff-sync also `MCC_ID`, optional `SLACK_CHANNEL`);
+- open **Config** and set `SUPABASE_URL` and `SUPABASE_ANON_KEY` (ff-sync also optional `SLACK_CHANNEL`);
 - open any node showing a credential warning and pick the credential with the same name;
 - on the **Webhook** node, set Allowed Origins to the Netlify URL;
 - Workflow settings > Timezone: FF's time zone;
@@ -72,6 +80,7 @@ In every workflow:
 | ff-review-actions | Search term triage, hide recommendations | staff |
 | ff-audit | Read-only audit; Rob marks reviewed | staff / Rob |
 | ff-dataforseo | Weekly keyword volume, CPC, related keywords (DataForSEO + Google Keyword Planner) | schedule; staff |
+| ff-google-ads-settings | Save Google Ads values, Connect with Google, Test connection (Settings page) | Rob; staff can test |
 
 **Google Ads writes** (build, apply, remove): Rob only, `validateOnly` first, created PAUSED, logged in `write_log`.
 They run on a Google Ads **test account** at any time; on a live account only after Rob turns

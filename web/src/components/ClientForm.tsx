@@ -12,6 +12,9 @@ const toList = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
 export default function ClientForm({ client, onClose, onSaved }: { client?: Client; onClose: () => void; onSaved: () => void }) {
   const [f, setF] = useState({
     name: client?.name ?? "",
+    contact_name: client?.contact_name ?? "",
+    contact_email: client?.contact_email ?? "",
+    google_ads_customer_id: "",
     slug: client?.slug ?? "",
     website_url: client?.website_url ?? "",
     phone: client?.phone ?? "",
@@ -39,6 +42,9 @@ export default function ClientForm({ client, onClose, onSaved }: { client?: Clie
     setError(null);
     const fields = {
       name: f.name,
+      contact_name: f.contact_name,
+      contact_email: f.contact_email,
+      ...(f.google_ads_customer_id.trim() ? { google_ads_customer_id: f.google_ads_customer_id.trim() } : {}),
       website_url: f.website_url,
       phone: f.phone,
       towns: toList(f.towns),
@@ -67,6 +73,15 @@ export default function ClientForm({ client, onClose, onSaved }: { client?: Clie
     <Modal title={client ? `Edit ${client.name}` : "New client"} onClose={onClose} wide>
       <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
         <Field label="Business name"><input required className={inputClass} value={f.name} onChange={set("name")} /></Field>
+        <Field label="Client's name" hint="The contact person at the funeral home.">
+          <input className={inputClass} value={f.contact_name} onChange={set("contact_name")} />
+        </Field>
+        <Field label="Email" hint="Contact email. Dashboard logins are created separately (Client logins).">
+          <input type="email" className={inputClass} value={f.contact_email} onChange={set("contact_email")} />
+        </Field>
+        <Field label={client ? "Add a Google Ads Account ID" : "Google Ads Account ID"} hint="10 digits, like 123-456-7890. Links the account to this client.">
+          <input className={inputClass} value={f.google_ads_customer_id} onChange={set("google_ads_customer_id")} placeholder="123-456-7890" />
+        </Field>
         {!client && (
           <Field label="Short name (slug)" hint="Lowercase and hyphens, used in audit file names. Left empty, it is made from the name.">
             <input className={inputClass} value={f.slug} onChange={set("slug")} placeholder="mccall-gardens" />

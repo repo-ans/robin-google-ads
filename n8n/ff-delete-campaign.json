@@ -2,7 +2,7 @@
   "name": "ff-delete-campaign",
   "nodes": [
     {
-      "id": "fc54466b-018a-43ec-ab02-9f6ba2c9fe2b",
+      "id": "97b21839-5802-4b28-bea6-2ac9f20391b1",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -22,7 +22,7 @@
       "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
     },
     {
-      "id": "26efc49b-ffba-4a3c-8554-1efac1635ca3",
+      "id": "56213d69-8fef-4471-bc26-ed4bcfca7950",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -36,7 +36,7 @@
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
     },
     {
-      "id": "c8f39082-c5ad-463d-b2ca-2acf5f1a28f6",
+      "id": "d7680797-f10e-49b7-84e3-e23ce6221772",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -50,7 +50,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "6210f3bf-0c57-4a2e-9dd6-a76ce3737d52",
+      "id": "526fee31-0ecb-486e-8943-3f780a4cbd7f",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -86,7 +86,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "c1c6b554-7883-4ec4-9e0e-a09f02051c5e",
+      "id": "530d23bd-d828-43ae-b863-a78f6e6c3371",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -131,7 +131,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "937c9234-1673-466c-9dbb-cde65b69b09f",
+      "id": "ccc883b2-0e33-4ac7-9f22-606a5fed0699",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -145,7 +145,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "6017f502-28bd-4b04-a484-4124e53630b7",
+      "id": "cb00076f-5ba6-4739-a5fc-ecf84d76bbfd",
       "parameters": {
         "conditions": {
           "options": {
@@ -178,7 +178,7 @@
       ]
     },
     {
-      "id": "adaf87dd-fcbf-444e-b8bb-f16d0f2cb6f4",
+      "id": "e958084e-6dea-43ca-bdc5-6169903e108a",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -196,7 +196,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "99872759-eba0-48bf-835d-3a2be4b30c93",
+      "id": "696b630a-649c-4d85-85b0-3767601d6296",
       "name": "Get campaign",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -220,7 +220,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "a0d054fa-7aee-483c-a1d8-32b348e02df7",
+      "id": "cdc09862-6f4b-468a-a9fd-7e884da48c51",
       "name": "Plan removal",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -233,7 +233,7 @@
       }
     },
     {
-      "id": "c86b8b64-4a97-4194-a01e-4a5d328c7c27",
+      "id": "183de649-b0e6-4e07-ba6f-0c556169298e",
       "name": "Allowed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -250,7 +250,7 @@
           },
           "conditions": [
             {
-              "id": "6bd1db48-be37-4e79-bd9b-d5e724c792d9",
+              "id": "4abf163f-bfd8-4067-a5d7-8171ab1d68a9",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -266,7 +266,35 @@
       }
     },
     {
-      "id": "77804373-ebf2-4c26-979d-439ad042977f",
+      "id": "d319313d-1d19-4c75-83eb-f1b4aa6206d0",
+      "name": "Get Google Ads secrets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        -200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/rpc/ff_google_ads_secrets",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "executeOnce": true,
+      "notes": "Developer token, OAuth client id/secret, refresh token and MCC id, entered by Rob on the dashboard Settings page (stored in Supabase private.google_ads_secrets - never readable by the browser)."
+    },
+    {
+      "id": "8e46f72e-0705-4684-b66d-fbef10d83b41",
       "name": "Refresh Google token",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -277,11 +305,28 @@
       "parameters": {
         "method": "POST",
         "url": "https://oauth2.googleapis.com/token",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpCustomAuth",
         "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={}",
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "client_id",
+              "value": "={{ $('Get Google Ads secrets').first().json.client_id }}"
+            },
+            {
+              "name": "client_secret",
+              "value": "={{ $('Get Google Ads secrets').first().json.client_secret }}"
+            },
+            {
+              "name": "refresh_token",
+              "value": "={{ $('Get Google Ads secrets').first().json.refresh_token }}"
+            },
+            {
+              "name": "grant_type",
+              "value": "refresh_token"
+            }
+          ]
+        },
         "options": {
           "response": {
             "response": {
@@ -290,16 +335,10 @@
           }
         }
       },
-      "credentials": {
-        "httpCustomAuth": {
-          "id": "",
-          "name": "FF Google OAuth refresh"
-        }
-      },
-      "notes": "OAuth refresh. client_id, client_secret and refresh_token come from the Custom Auth credential 'FF Google OAuth refresh' - never from code or Supabase."
+      "notes": "OAuth refresh, same as the reference. Values from 'Get Google Ads secrets'. Test: Execute step - the output must contain access_token."
     },
     {
-      "id": "7ea492e6-5ae6-436f-9377-cc28c38cf2d8",
+      "id": "d0aab107-6fa6-4f00-9e26-2f114bb1672e",
       "name": "Validate removal",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -310,11 +349,9 @@
       "parameters": {
         "method": "POST",
         "url": "=https://googleads.googleapis.com/{{ $('Config').first().json.GOOGLE_ADS_API_VERSION }}/customers/{{ $('Plan removal').first().json.customer_id }}/campaigns:mutate",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpCustomAuth",
         "sendHeaders": true,
         "specifyHeaders": "json",
-        "jsonHeaders": "={{ JSON.stringify(Object.assign({ \"Authorization\": \"Bearer \" + ($('Refresh Google token').first().json.access_token || 'missing'), \"Content-Type\": \"application/json\" }, $('Plan removal').first().json.login_customer_id ? { \"login-customer-id\": $('Plan removal').first().json.login_customer_id } : {})) }}",
+        "jsonHeaders": "={{ JSON.stringify(Object.assign({ \"Authorization\": \"Bearer \" + ($('Refresh Google token').first().json.access_token || 'missing'), \"developer-token\": $('Get Google Ads secrets').first().json.developer_token || '', \"Content-Type\": \"application/json\" }, $('Plan removal').first().json.login_customer_id ? { \"login-customer-id\": $('Plan removal').first().json.login_customer_id } : {})) }}",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify(Object.assign({}, $('Plan removal').first().json.mutate_body, { validateOnly: true })) }}",
@@ -327,16 +364,10 @@
           },
           "timeout": 120000
         }
-      },
-      "credentials": {
-        "httpCustomAuth": {
-          "id": "",
-          "name": "FF Google Ads developer token"
-        }
       }
     },
     {
-      "id": "5ef6b860-3eb1-4066-b256-479e72f4b52f",
+      "id": "29a0f7c1-db87-4532-9567-2077d328aa3d",
       "name": "Check validation",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -349,7 +380,7 @@
       }
     },
     {
-      "id": "5538e345-be88-4863-879e-a0450a621433",
+      "id": "1ac72163-61b2-429b-b88b-17cbb8a7422a",
       "name": "Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -366,7 +397,7 @@
           },
           "conditions": [
             {
-              "id": "8cd724cb-0df6-42de-bde4-444e03c34060",
+              "id": "47775088-f0a1-4d8c-9cca-f8ce048f1ea7",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -382,7 +413,7 @@
       }
     },
     {
-      "id": "9c890bbd-0f8c-4b51-abe3-3854976989d5",
+      "id": "a11fc749-b699-4be5-850f-42c7f9cc7084",
       "name": "Remove campaign",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -393,11 +424,9 @@
       "parameters": {
         "method": "POST",
         "url": "=https://googleads.googleapis.com/{{ $('Config').first().json.GOOGLE_ADS_API_VERSION }}/customers/{{ $('Plan removal').first().json.customer_id }}/campaigns:mutate",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpCustomAuth",
         "sendHeaders": true,
         "specifyHeaders": "json",
-        "jsonHeaders": "={{ JSON.stringify(Object.assign({ \"Authorization\": \"Bearer \" + ($('Refresh Google token').first().json.access_token || 'missing'), \"Content-Type\": \"application/json\" }, $('Plan removal').first().json.login_customer_id ? { \"login-customer-id\": $('Plan removal').first().json.login_customer_id } : {})) }}",
+        "jsonHeaders": "={{ JSON.stringify(Object.assign({ \"Authorization\": \"Bearer \" + ($('Refresh Google token').first().json.access_token || 'missing'), \"developer-token\": $('Get Google Ads secrets').first().json.developer_token || '', \"Content-Type\": \"application/json\" }, $('Plan removal').first().json.login_customer_id ? { \"login-customer-id\": $('Plan removal').first().json.login_customer_id } : {})) }}",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($('Plan removal').first().json.mutate_body) }}",
@@ -411,16 +440,10 @@
           "timeout": 120000
         }
       },
-      "credentials": {
-        "httpCustomAuth": {
-          "id": "",
-          "name": "FF Google Ads developer token"
-        }
-      },
       "notes": "Google never hard-deletes: status becomes REMOVED. Already removed counts as done (reference lesson)."
     },
     {
-      "id": "587723a6-0d55-4dc3-9dcb-e1be4661915a",
+      "id": "00cfe037-a869-41f6-a174-8e15a66d9ade",
       "name": "Plan records",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -433,7 +456,7 @@
       }
     },
     {
-      "id": "7a757251-4bdd-4616-9ce9-277ffbd527d8",
+      "id": "f6e23b0d-28ab-415e-8a4e-7f4378fd16e1",
       "name": "Save records",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -477,7 +500,7 @@
       "notes": "write_log, plus the Supabase follow-up for a successful change."
     },
     {
-      "id": "75aed78f-f132-48fc-a898-c4c1d2fea7e5",
+      "id": "dade9451-9da8-4a2e-b956-c7f59812aa60",
       "name": "Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -491,7 +514,7 @@
       "executeOnce": true
     },
     {
-      "id": "fda62477-1458-401f-b3f3-bffc58f7a8de",
+      "id": "32384ab8-4142-4aad-a929-2ec246eca7b4",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -652,7 +675,7 @@
       "main": [
         [
           {
-            "node": "Refresh Google token",
+            "node": "Get Google Ads secrets",
             "type": "main",
             "index": 0
           }
@@ -660,6 +683,17 @@
         [
           {
             "node": "Plan records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Google Ads secrets": {
+      "main": [
+        [
+          {
+            "node": "Refresh Google token",
             "type": "main",
             "index": 0
           }

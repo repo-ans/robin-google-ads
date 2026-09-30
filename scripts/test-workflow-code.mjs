@@ -298,6 +298,23 @@ await test("client admin: create login and disable login plans", async () => {
   assert.equal(self[0].json.status, 403);
 });
 
+await test("client admin: new client with contact and Google Ads account links the account after the client", async () => {
+  const out = await run("ff-client-admin/plan.js", {
+    input: [item({})],
+    nodes: ctxNodes({ action: "create_client", name: "McCall Gardens", contact_name: "Office Manager", contact_email: "Office@McCall.test", google_ads_customer_id: "123-456-7890" }, staff),
+  });
+  assert.equal(out.length, 2);
+  const [client, link] = out.map((o) => o.json);
+  assert.equal(client.path, "rest/v1/clients");
+  assert.equal(client.body.contact_email, "office@mccall.test");
+  assert.match(client.body.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.deepEqual(link.body, [{ customer_id: "1234567890", client_id: client.body.id }]);
+  const bad = await run("ff-client-admin/plan.js", {
+    input: [item({})], nodes: ctxNodes({ action: "create_client", name: "X Home", google_ads_customer_id: "12345" }, staff),
+  });
+  assert.equal(bad[0].json.status, 400);
+});
+
 await test("client admin: client fields are whitelisted and checked", async () => {
   const out = await run("ff-client-admin/plan.js", {
     input: [item({})],
@@ -362,6 +379,59 @@ await test("dataforseo: volumes, Google metrics and related keywords map to one 
   assert.equal(kp.avg_monthly_searches, 720);
   const keys = JSON.stringify(Object.keys(dfs).sort());
   assert.equal(JSON.stringify(Object.keys(kp).sort()), keys, "same keys in one upsert");
+});
+
+// ------------------------------------------------------------------ Google Ads settings
+await test("google ads settings: only Rob saves; values are checked; test is open to staff", async () => {
+  const staffSave = await run("ff-google-ads-settings/validate.js", { nodes: ctxNodes({ action: "save", values: { mcc_id: "123-456-7890" } }, staff) });
+  assert.equal(staffSave[0].json.status, 403);
+  const staffTest = await run("ff-google-ads-settings/validate.js", { nodes: ctxNodes({ action: "test" }, staff) });
+  assert.equal(staffTest[0].json.valid, true);
+  const [save] = await run("ff-google-ads-settings/validate.js", {
+    nodes: ctxNodes({ action: "save", values: { mcc_id: "123-456-7890", client_id: "549-abc.apps.googleusercontent.com", client_secret: "", developer_token: "AbCdEf12345" } }, rob),
+  });
+  assert.deepEqual(save.json.values, { mcc_id: "1234567890", client_id: "549-abc.apps.googleusercontent.com", developer_token: "AbCdEf12345" });
+  const badId = await run("ff-google-ads-settings/validate.js", { nodes: ctxNodes({ action: "save", values: { client_id: "not-an-id" } }, rob) });
+  assert.equal(badId[0].json.status, 400);
+  const badRedirect = await run("ff-google-ads-settings/validate.js", {
+    nodes: ctxNodes({ action: "exchange_code", code: "4/abc", redirect_uri: "https://evil.test/steal" }, rob),
+  });
+  assert.equal(badRedirect[0].json.status, 400);
+  const good = await run("ff-google-ads-settings/validate.js", {
+    nodes: ctxNodes({ action: "exchange_code", code: "4/abc", redirect_uri: "https://ff-ads.netlify.app/settings/google-callback" }, rob),
+  });
+  assert.equal(good[0].json.valid, true);
+});
+
+await test("google ads settings: refresh token is passed on but never in the answer", async () => {
+  const [ok] = await run("ff-google-ads-settings/check-exchange.js", { input: [item({ statusCode: 200, body: { access_token: "ya29", refresh_token: "1//secret" } })] });
+  assert.equal(ok.json.ok, true);
+  const [bad] = await run("ff-google-ads-settings/check-exchange.js", { input: [item({ statusCode: 400, body: { error: "redirect_uri_mismatch" } })] });
+  assert.match(bad.json.body.error, /Authorized redirect URIs/);
+  assert.ok(!JSON.stringify(bad.json).includes("1//"));
+});
+
+await test("google ads settings: test explains the first problem in plain words", async () => {
+  const secrets = { client_id: "a", client_secret: "b", refresh_token: "c", developer_token: "d", mcc_id: "1234567890" };
+  const missing = await run("ff-google-ads-settings/test-result.js", {
+    input: [item({})], nodes: { "Get Google Ads secrets": [item({ client_id: "a" })], "Refresh Google token": [item({})] },
+  });
+  assert.match(missing[0].json.body.message, /Not set yet: Client secret/);
+  const expired = await run("ff-google-ads-settings/test-result.js", {
+    input: [item({})], nodes: { "Get Google Ads secrets": [item(secrets)], "Refresh Google token": [item({ error: "invalid_grant" })] },
+  });
+  assert.match(expired[0].json.body.message, /In production/);
+  const connected = await run("ff-google-ads-settings/test-result.js", {
+    input: [item({ statusCode: 200, body: { resourceNames: ["customers/1234567890", "customers/2222222222"] } })],
+    nodes: { "Get Google Ads secrets": [item(secrets)], "Refresh Google token": [item({ access_token: "x" })] },
+  });
+  assert.equal(connected[0].json.body.ok, true);
+  assert.match(connected[0].json.body.message, /2 Google Ads account/);
+  const noMcc = await run("ff-google-ads-settings/test-result.js", {
+    input: [item({ statusCode: 200, body: { resourceNames: ["customers/2222222222"] } })],
+    nodes: { "Get Google Ads secrets": [item(secrets)], "Refresh Google token": [item({ access_token: "x" })] },
+  });
+  assert.equal(noMcc[0].json.body.ok, false);
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ", some failed" : ""}`);

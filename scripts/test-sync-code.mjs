@@ -65,7 +65,8 @@ const account = {
   customer_id: "1111111111", login_customer_id: "9999999999", time_zone: "America/Toronto",
   first_synced_at: null, towns: ["Mount Pleasant"], own_brand_terms: ["McCall Gardens"], competitor_terms: ["Smith Funeral Home"],
 };
-const cfg = { trigger: "schedule", mode: "daily", MCC_ID: "9999999999", SLACK_CHANNEL: "#ff-ads", AI_SUGGESTIONS: true };
+const cfg = { trigger: "schedule", mode: "daily", SLACK_CHANNEL: "#ff-ads", AI_SUGGESTIONS: true };
+const secretsNode = [{ json: { mcc_id: "999-999-9999" } }];
 let queries;
 await test("build queries: 27 queries, first sync uses 365/90-day windows", async () => {
   queries = await run("build-queries.js", {
@@ -257,7 +258,7 @@ await test("account upserts: skips the MCC itself and never sends client_id", as
       { customerClient: { id: "1111111111", descriptiveName: "Pilot", status: "ENABLED" } },
       { customerClient: { id: "9999999999", manager: true } },
     ]))],
-    nodes: { Config: [item(cfg)] },
+    nodes: { Config: [item(cfg)], "Get Google Ads secrets": secretsNode },
   });
   assert.deepEqual(out.json.rows.map((r) => r.customer_id), ["1111111111"]);
   assert.ok(!("client_id" in out.json.rows[0]));

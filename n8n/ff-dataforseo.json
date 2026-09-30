@@ -2,7 +2,7 @@
   "name": "ff-dataforseo",
   "nodes": [
     {
-      "id": "3ce0383f-e28a-4159-86e7-7ef0a1a83886",
+      "id": "03c064c8-43fa-4527-a946-7c09d898a481",
       "name": "Schedule: weekly Monday 05:00",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
@@ -25,7 +25,7 @@
       }
     },
     {
-      "id": "5a20fa15-6532-45bb-b604-24dc31a4c04a",
+      "id": "aab5be49-94a4-4ceb-a0dd-6495a6b4b776",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -45,7 +45,7 @@
       "notes": "Refresh keyword data from the dashboard. Answers 202 at once; the research carries on."
     },
     {
-      "id": "7ca199df-0d64-4470-a376-8e56917c2b5b",
+      "id": "2b23281c-ea0d-47eb-844a-bb3176be96c5",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -54,12 +54,12 @@
         200
       ],
       "parameters": {
-        "jsCode": "// Non-secret settings for ff-dataforseo. Secrets are n8n credentials:\n//   FF Supabase (service role), FF Google OAuth refresh,\n//   FF Google Ads developer token, FF DataForSEO (Basic Auth: API login + password).\n// Weekly (Monday 05:00) and from the dashboard (\"Refresh keyword data\").\n// Webhook body (optional): { client_id } to research one client only.\nconst SETTINGS = {\n  SUPABASE_URL: 'https://SET-ME.supabase.co',\n  SUPABASE_ANON_KEY: 'SET-ME',\n  GOOGLE_ADS_API_VERSION: 'v25',\n  ALLOWED_ROLES: ['rob_admin', 'ff_staff'],\n  RELATED_SEEDS_PER_CLIENT: 5, // DataForSEO related-keywords calls per client per run\n  RELATED_PER_SEED: 20,\n};\n\nconst src = $input.first().json || {};\nconst fromWebhook = Boolean(src.headers);\nconst body = fromWebhook && src.body && typeof src.body === 'object' ? src.body : {};\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\nreturn [{\n  json: {\n    ...SETTINGS,\n    body,\n    trigger: fromWebhook ? 'manual' : 'schedule',\n    only_client_id: typeof body.client_id === 'string' && uuid.test(body.client_id) ? body.client_id : null,\n  },\n}];\n"
+        "jsCode": "// Non-secret settings for ff-dataforseo. n8n credentials: FF Supabase (service\n// role) and FF DataForSEO (Basic Auth: API login + password). Google Ads values\n// come from the dashboard Settings page (\"Get Google Ads secrets\").\n// Weekly (Monday 05:00) and from the dashboard (\"Refresh keyword data\").\n// Webhook body (optional): { client_id } to research one client only.\nconst SETTINGS = {\n  SUPABASE_URL: 'https://SET-ME.supabase.co',\n  SUPABASE_ANON_KEY: 'SET-ME',\n  GOOGLE_ADS_API_VERSION: 'v25',\n  ALLOWED_ROLES: ['rob_admin', 'ff_staff'],\n  RELATED_SEEDS_PER_CLIENT: 5, // DataForSEO related-keywords calls per client per run\n  RELATED_PER_SEED: 20,\n};\n\nconst src = $input.first().json || {};\nconst fromWebhook = Boolean(src.headers);\nconst body = fromWebhook && src.body && typeof src.body === 'object' ? src.body : {};\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\nreturn [{\n  json: {\n    ...SETTINGS,\n    body,\n    trigger: fromWebhook ? 'manual' : 'schedule',\n    only_client_id: typeof body.client_id === 'string' && uuid.test(body.client_id) ? body.client_id : null,\n  },\n}];\n"
       },
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
     },
     {
-      "id": "fa2a0115-c27c-44cb-abaf-91726f889d75",
+      "id": "5c9dc1a5-abe9-4521-8d1b-f017d1941a2e",
       "name": "Manual run?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -76,7 +76,7 @@
           },
           "conditions": [
             {
-              "id": "bb0947e0-8b41-4d6e-9c35-8b13955592c8",
+              "id": "62704708-f170-41fe-844b-1c3af0300355",
               "leftValue": "={{ $('Config').first().json.trigger === 'manual' }}",
               "rightValue": true,
               "operator": {
@@ -92,7 +92,7 @@
       }
     },
     {
-      "id": "fc7302cb-468a-4b8d-8a2a-13fad1863f97",
+      "id": "9800df27-13ad-42e8-89fb-7b76ed24a1f5",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -106,7 +106,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "2445587e-9302-4fe2-a482-94733bbe3a13",
+      "id": "148e6820-4cbf-4a12-9474-09e2daf83035",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -142,7 +142,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "163649db-7d3e-421e-bc2f-eae921186106",
+      "id": "3da742f3-6f58-46f4-a6c3-2f00ad338f2d",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -187,7 +187,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "e5a464fa-f604-4add-beb2-41bc5b76d129",
+      "id": "9e968201-9953-4b1f-9e4f-01e49cc54bff",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -201,7 +201,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "900e0ad2-6e7e-49c5-918a-6c61d1e9474e",
+      "id": "9b2ad24b-1293-4766-af49-662c89ff1c95",
       "parameters": {
         "conditions": {
           "options": {
@@ -234,7 +234,7 @@
       ]
     },
     {
-      "id": "029292ae-ece2-4063-93d5-4e0b1d3f6974",
+      "id": "4e87ee27-2810-49fe-a5e3-7021e53fa52a",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -252,7 +252,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "4ca1e5b7-3a0e-4177-947b-ce2615a0a18b",
+      "id": "de38c718-93c0-4a97-b33e-e5bd2583a757",
       "name": "Respond: accepted",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -269,7 +269,35 @@
       }
     },
     {
-      "id": "21781232-047c-4357-89c5-3702197ea60a",
+      "id": "46bf7c44-ee35-4ff1-b4d2-4017e6d1dfbf",
+      "name": "Get Google Ads secrets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/rpc/ff_google_ads_secrets",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "executeOnce": true,
+      "notes": "Developer token, OAuth client id/secret, refresh token and MCC id, entered by Rob on the dashboard Settings page (stored in Supabase private.google_ads_secrets - never readable by the browser)."
+    },
+    {
+      "id": "a2132770-cce5-4204-bac6-a1d1d50a87de",
       "name": "Get research targets",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -296,7 +324,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "be027aa8-c66c-469b-8fc3-a888cfce87ef",
+      "id": "a2f1a21d-72ce-429e-a7b0-c8f97a05a25e",
       "name": "Prepare targets",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -309,7 +337,7 @@
       }
     },
     {
-      "id": "bd947b46-70a2-4181-81c2-2b18ef8cbf6c",
+      "id": "cd321aba-014b-4a15-b30e-ec89d514752b",
       "name": "Anything to research?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -326,7 +354,7 @@
           },
           "conditions": [
             {
-              "id": "bc843419-5200-493f-8578-292998fbd9d0",
+              "id": "1ff658f9-949f-43c8-ae1e-6aee1bfd09ea",
               "leftValue": "={{ !$json.none }}",
               "rightValue": true,
               "operator": {
@@ -342,7 +370,7 @@
       }
     },
     {
-      "id": "6b96d417-4edb-4c94-9569-4bcecbb8becd",
+      "id": "7a4f5493-75c2-493f-bd57-30077412f6d6",
       "name": "Loop over clients",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
@@ -356,7 +384,7 @@
       }
     },
     {
-      "id": "48210879-b190-4410-a99c-e44d23a86068",
+      "id": "9e3b4ca4-253d-456c-a045-2f476a30e7bb",
       "name": "Refresh Google token",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -367,11 +395,28 @@
       "parameters": {
         "method": "POST",
         "url": "https://oauth2.googleapis.com/token",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpCustomAuth",
         "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={}",
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "client_id",
+              "value": "={{ $('Get Google Ads secrets').first().json.client_id }}"
+            },
+            {
+              "name": "client_secret",
+              "value": "={{ $('Get Google Ads secrets').first().json.client_secret }}"
+            },
+            {
+              "name": "refresh_token",
+              "value": "={{ $('Get Google Ads secrets').first().json.refresh_token }}"
+            },
+            {
+              "name": "grant_type",
+              "value": "refresh_token"
+            }
+          ]
+        },
         "options": {
           "response": {
             "response": {
@@ -380,16 +425,10 @@
           }
         }
       },
-      "credentials": {
-        "httpCustomAuth": {
-          "id": "",
-          "name": "FF Google OAuth refresh"
-        }
-      },
-      "notes": "OAuth refresh. client_id, client_secret and refresh_token come from the Custom Auth credential 'FF Google OAuth refresh' - never from code or Supabase."
+      "notes": "OAuth refresh, same as the reference. Values from 'Get Google Ads secrets'. Test: Execute step - the output must contain access_token."
     },
     {
-      "id": "c63aa99f-1096-4540-8359-4b9b3bcccd6d",
+      "id": "513781dd-a4cc-435d-b4a1-b6489f8c09ef",
       "name": "Build requests",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -402,7 +441,7 @@
       }
     },
     {
-      "id": "23a50640-18e4-4981-b540-4c7531c4d236",
+      "id": "477c6e7e-c4ae-4fb4-b6f7-d225188b7a6f",
       "name": "DataForSEO search volume",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -437,7 +476,7 @@
       "notes": "Volume, CPC and competition for up to 1000 of our keywords, negatives and search terms."
     },
     {
-      "id": "699120df-435c-443c-89bd-7e621684124c",
+      "id": "bb78b7c1-97f9-4299-a54e-61629b9e462d",
       "name": "Google keyword metrics",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -448,11 +487,9 @@
       "parameters": {
         "method": "POST",
         "url": "=https://googleads.googleapis.com/{{ $('Config').first().json.GOOGLE_ADS_API_VERSION }}/customers/{{ $('Build requests').first().json.customer_id }}:generateKeywordHistoricalMetrics",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpCustomAuth",
         "sendHeaders": true,
         "specifyHeaders": "json",
-        "jsonHeaders": "={{ JSON.stringify(Object.assign({ \"Authorization\": \"Bearer \" + ($('Refresh Google token').first().json.access_token || 'missing'), \"Content-Type\": \"application/json\" }, $('Build requests').first().json.login_customer_id ? { \"login-customer-id\": $('Build requests').first().json.login_customer_id } : {})) }}",
+        "jsonHeaders": "={{ JSON.stringify(Object.assign({ \"Authorization\": \"Bearer \" + ($('Refresh Google token').first().json.access_token || 'missing'), \"developer-token\": $('Get Google Ads secrets').first().json.developer_token || '', \"Content-Type\": \"application/json\" }, $('Build requests').first().json.login_customer_id ? { \"login-customer-id\": $('Build requests').first().json.login_customer_id } : {})) }}",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($('Build requests').first().json.google_body) }}",
@@ -466,16 +503,10 @@
           "timeout": 120000
         }
       },
-      "credentials": {
-        "httpCustomAuth": {
-          "id": "",
-          "name": "FF Google Ads developer token"
-        }
-      },
       "notes": "Google Keyword Planner historical metrics. Read only (not a mutate)."
     },
     {
-      "id": "d3adefcc-76c4-4ed4-a88a-f321ff6e09aa",
+      "id": "ae43e6de-b220-4d51-810e-c01de23ed15c",
       "name": "Related seeds",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -488,7 +519,7 @@
       }
     },
     {
-      "id": "764e5b64-768e-4832-8794-0bdac2baf1c0",
+      "id": "3dc026cf-af81-4fb5-9020-94e9645fc5a7",
       "name": "DataForSEO related keywords",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -528,7 +559,7 @@
       }
     },
     {
-      "id": "da1aa5dd-6b87-4c8f-be48-4e99f14afc51",
+      "id": "0f8ac21a-60af-4bee-8aca-13e0c8ff1dc5",
       "name": "Map results",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -541,7 +572,7 @@
       }
     },
     {
-      "id": "da665082-ca00-46a3-af9e-db1cd76197e6",
+      "id": "6cc8f306-58bc-42ec-8cfc-a45d83d91dbc",
       "name": "Upsert keyword data",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -583,7 +614,7 @@
       }
     },
     {
-      "id": "1d469b23-730f-4cdd-b2e8-36add6b28a83",
+      "id": "51801572-c5a1-41f2-b307-2da134e79933",
       "name": "Done",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
@@ -639,7 +670,7 @@
         ],
         [
           {
-            "node": "Get research targets",
+            "node": "Get Google Ads secrets",
             "type": "main",
             "index": 0
           }
@@ -709,6 +740,17 @@
       ]
     },
     "Respond: accepted": {
+      "main": [
+        [
+          {
+            "node": "Get Google Ads secrets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Google Ads secrets": {
       "main": [
         [
           {

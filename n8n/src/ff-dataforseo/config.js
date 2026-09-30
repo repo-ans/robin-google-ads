@@ -1,6 +1,6 @@
-// Non-secret settings for ff-dataforseo. Secrets are n8n credentials:
-//   FF Supabase (service role), FF Google OAuth refresh,
-//   FF Google Ads developer token, FF DataForSEO (Basic Auth: API login + password).
+// Non-secret settings for ff-dataforseo. n8n credentials: FF Supabase (service
+// role) and FF DataForSEO (Basic Auth: API login + password). Google Ads values
+// come from the dashboard Settings page ("Get Google Ads secrets").
 // Weekly (Monday 05:00) and from the dashboard ("Refresh keyword data").
 // Webhook body (optional): { client_id } to research one client only.
 const SETTINGS = {

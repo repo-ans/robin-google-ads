@@ -23,11 +23,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const dir = join(root, "n8n");
 
 const WRITE_WORKFLOWS = new Set(["ff-build-campaign", "ff-apply-campaign-action", "ff-delete-campaign"]);
-const READ_ENDPOINTS = [/googleAds:search(Stream)?\b/, /:generateKeywordHistoricalMetrics\b/, /geoTargetConstants:suggest\b/, /oauth2\.googleapis\.com/];
-const ALLOWED_CREDENTIALS = new Set([
-  "FF Supabase (service role)", "FF Google OAuth refresh", "FF Google Ads developer token",
-  "FF OpenAI", "FF Slack", "FF DataForSEO",
-]);
+const READ_ENDPOINTS = [/googleAds:search(Stream)?\b/, /:generateKeywordHistoricalMetrics\b/, /geoTargetConstants:suggest\b/, /customers:listAccessibleCustomers\b/, /oauth2\.googleapis\.com/];
+// Google Ads values are entered on the dashboard and stored in Supabase
+// (private.google_ads_secrets), so there are no Google credentials in n8n.
+const ALLOWED_CREDENTIALS = new Set(["FF Supabase (service role)", "FF OpenAI", "FF Slack", "FF DataForSEO"]);
 
 const FORBIDDEN = [
   ["3534195221", "reference direct-access customer id"],
@@ -40,8 +39,8 @@ const FORBIDDEN = [
   ["ans-google-ads.netlify.app", "reference dashboard URL"],
   ["DIRECT_ACCESS_CUSTOMER_IDS", "hardcoded direct-access list (use ad_accounts.login_customer_id)"],
   ["google_ads_settings", "reference secrets table"],
-  ["ff_secrets", "old Supabase secrets function (secrets are n8n credentials)"],
-  ["private.secrets", "old Supabase secrets table (secrets are n8n credentials)"],
+  ["ff_secrets(", "old secrets function (use ff_google_ads_secrets)"],
+  ["private.secrets", "old secrets table (use private.google_ads_secrets)"],
 ];
 
 const AUTH_BLOCK = ["Auth: read token", "Auth: verify token", "Auth: load profile", "Auth: check role", "Auth: allowed?", "Respond: denied"];

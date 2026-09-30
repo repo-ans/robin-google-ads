@@ -2,7 +2,7 @@
   "name": "ff-audit",
   "nodes": [
     {
-      "id": "a021a4ca-c29a-4ef4-a876-631557cac64c",
+      "id": "405005c7-21e5-42c4-b44c-9b35b3f81860",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -22,7 +22,7 @@
       "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
     },
     {
-      "id": "7860f1f9-1256-47ad-acfb-9535361069e3",
+      "id": "b2bb6b45-ac82-4d87-b62b-6cdf081b3074",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -36,7 +36,7 @@
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
     },
     {
-      "id": "deec52d4-18b6-4ca6-85c4-f424ea25a50d",
+      "id": "f1ba0b6d-909a-4318-89cb-8b3a6a62cfed",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -50,7 +50,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "aba625d1-37eb-4a45-b8ad-731f42776ade",
+      "id": "717550e6-a246-4e04-922d-0109e94490ae",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -86,7 +86,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "284dfdf1-1a34-4451-872d-973686f054ff",
+      "id": "498b785e-0ba6-406e-969a-04843a406461",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -131,7 +131,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "ea1c0106-6712-457e-a63e-728d643cfdf1",
+      "id": "3e68d582-93d5-4395-886b-9614783bb6a6",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -145,7 +145,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "03f32fd9-19f8-4270-86f5-8a3a21ffa405",
+      "id": "9ea5a377-0922-4a01-ad57-7e25226eb804",
       "parameters": {
         "conditions": {
           "options": {
@@ -178,7 +178,7 @@
       ]
     },
     {
-      "id": "2d183b28-09e2-462e-abf7-dc3b2c4af4d3",
+      "id": "6a415d3b-5f9a-4fb6-a866-e8cb9efd4d44",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -196,7 +196,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "a7a20fcc-d1bb-42f6-b036-71e5486d584a",
+      "id": "1b937333-7f77-480d-9caa-faf54912ddc4",
       "name": "Validate input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -209,7 +209,7 @@
       }
     },
     {
-      "id": "44910142-eace-4b4c-83f0-b94f2c102b71",
+      "id": "a4d74cec-ef36-491b-8c66-2a4926b12fed",
       "name": "Validate input ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -226,7 +226,7 @@
           },
           "conditions": [
             {
-              "id": "f858771b-f6c9-42c8-8f58-db73323fae69",
+              "id": "de2d8692-c6d2-46e6-9ad6-8233807bcf8c",
               "leftValue": "={{ $json.valid === true }}",
               "rightValue": true,
               "operator": {
@@ -242,7 +242,7 @@
       }
     },
     {
-      "id": "d0fa76ed-d738-4c83-ab57-15390708843f",
+      "id": "fc021980-f553-480f-ad54-652a5ebaa748",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -259,7 +259,7 @@
       }
     },
     {
-      "id": "c9d982bf-639f-444e-8579-5c0c352493d9",
+      "id": "d6b90638-6afa-4f7e-8ce9-e44a2c415406",
       "name": "Generate?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -276,7 +276,7 @@
           },
           "conditions": [
             {
-              "id": "01ddbe80-30e8-4716-99a8-c9cf7164947a",
+              "id": "e6b46b61-67ce-47bb-8ce1-2d311b44c99c",
               "leftValue": "={{ $json.action === 'generate' }}",
               "rightValue": true,
               "operator": {
@@ -292,7 +292,7 @@
       }
     },
     {
-      "id": "9a70d6b2-3462-45db-b8a3-743aea367d41",
+      "id": "c69761c6-0bc6-4db4-a413-857e4acef022",
       "name": "Get account",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -316,7 +316,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "8bb70606-5b04-441e-99bd-cadabbf77e93",
+      "id": "f4f2326f-90dc-4a97-94d1-d44710933a6f",
       "name": "Check account",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -329,7 +329,7 @@
       }
     },
     {
-      "id": "79863152-1cf3-4c2d-98a7-8e6de956b9c2",
+      "id": "890c5bc4-c9d9-44ef-8f49-8f87318b2467",
       "name": "Account ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -346,7 +346,7 @@
           },
           "conditions": [
             {
-              "id": "898b3cb2-8764-4588-bfca-ecd6ba380128",
+              "id": "5d344447-3cd4-4716-a9b3-95ce71aadc1b",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -362,7 +362,7 @@
       }
     },
     {
-      "id": "ae3148d6-d7fb-464f-bfdb-612dc1b3bd75",
+      "id": "67545be9-0ac6-48ca-ad12-631acb14aaa9",
       "name": "Get audit data",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -388,7 +388,7 @@
       }
     },
     {
-      "id": "ab3dde5b-20bd-46b9-9222-4fac581e1970",
+      "id": "a125ace0-7517-4806-88f1-df1bb550ec1a",
       "name": "Write audit",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -401,7 +401,7 @@
       }
     },
     {
-      "id": "193eb4a7-5147-41b6-b56d-16526b1295c1",
+      "id": "d1826386-9675-4f6c-897e-e86a87c1f752",
       "name": "Save audit",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -436,7 +436,7 @@
       }
     },
     {
-      "id": "866b13fa-f0dd-44fe-861f-7f2db929d6b6",
+      "id": "c714ec44-5c4e-44bb-9b76-eb181c52c0fb",
       "name": "Audit result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -449,7 +449,7 @@
       }
     },
     {
-      "id": "3c1fe927-7d28-42a8-bb90-593167848f86",
+      "id": "c0cc2757-c352-47be-a079-733f62b559bb",
       "name": "Mark reviewed",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -485,7 +485,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "7ccc757c-b01f-4abc-bdaa-16892e36a963",
+      "id": "2c5105ac-e7e9-4d62-88b0-8a9528a3b649",
       "name": "Review result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,

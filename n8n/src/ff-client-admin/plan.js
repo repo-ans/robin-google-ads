@@ -1,6 +1,6 @@
 // @include shared/input.js
 // Everything FF staff do to clients, accounts and logins. Body { action, ... }:
-//   create_client      { name, slug?, website_url?, phone?, towns?, process?, currency_code?, case_value?,
+//   create_client      { name, contact_name?, contact_email?, google_ads_customer_id?, slug?, website_url?, phone?, towns?, process?, currency_code?, case_value?,
 //                        competitor_terms?, own_brand_terms?, slack_channel?, ghl_location_id?,
 //                        dataforseo_location_code?, language_code?, office_hours? }
 //   update_client      { client_id, ...same fields }
@@ -37,6 +37,12 @@ function clientFields(src) {
     f.website_url = u || null;
   }
   if ('phone' in src) f.phone = text(src.phone, 40) || null;
+  if ('contact_name' in src) f.contact_name = text(src.contact_name, 120) || null;
+  if ('contact_email' in src) {
+    const e = text(src.contact_email, 200).toLowerCase();
+    if (e && !EMAIL_RE.test(e)) errors.push('Enter a valid contact email.');
+    f.contact_email = e || null;
+  }
   if ('towns' in src) f.towns = list(src.towns);
   if ('service_area_notes' in src) f.service_area_notes = text(src.service_area_notes, 1000) || null;
   if ('process' in src) {
@@ -78,6 +84,22 @@ function clientFields(src) {
 }
 
 const req = (method, path, body, prefer = 'return=representation') => ({ method, path, body, prefer });
+// Link a Google Ads account to the client (runs after the client row exists -
+// "Run requests" sends one request at a time, in order). Only customer_id and
+// client_id are sent, so a sync's login_customer_id is kept.
+const linkAccount = (cid, clientId) => req('POST', 'rest/v1/ad_accounts?on_conflict=customer_id',
+  [{ customer_id: cid, client_id: clientId }], 'resolution=merge-duplicates,return=minimal');
+// Random v4 UUID so the account link can refer to the new client in the same run.
+const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+  const r = Math.floor(Math.random() * 16);
+  return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+});
+const adsId = () => {
+  const raw = b.google_ads_customer_id;
+  if (raw === undefined || raw === null || String(raw).trim() === '') return { cid: null };
+  const cid = customerId(raw);
+  return cid ? { cid } : { error: 'Google Ads Account ID must be 10 digits, like 123-456-7890.' };
+};
 const run = (requests, message) => requests.map((r) => ({ json: { valid: true, kind: 'requests', message, ...r } }));
 
 function targetCheck(action) {
@@ -94,15 +116,25 @@ switch (b.action) {
     if (!f.name) errors.push('Name is required.');
     const slug = slugify(b.slug || b.name || '');
     if (slug.length < 2) errors.push('Slug is required.');
+    const ads = adsId();
+    if (ads.error) errors.push(ads.error);
     if (errors.length) return reject(400, errors.join(' '));
-    return run([req('POST', 'rest/v1/clients', { ...f, slug })], 'Client created.');
+    const id = uuid();
+    const requests = [req('POST', 'rest/v1/clients', { ...f, id, slug })];
+    if (ads.cid) requests.push(linkAccount(ads.cid, id));
+    return run(requests, ads.cid ? 'Client created and Google Ads account linked.' : 'Client created.');
   }
   case 'update_client': {
     if (!isUuid(b.client_id)) return reject(400, 'client_id is missing or not valid.');
     const { f, errors } = clientFields(b);
+    const ads = adsId();
+    if (ads.error) errors.push(ads.error);
     if (errors.length) return reject(400, errors.join(' '));
-    if (!Object.keys(f).length) return reject(400, 'Nothing to change.');
-    return run([req('PATCH', `rest/v1/clients?id=eq.${b.client_id}`, f)], 'Client updated.');
+    if (!Object.keys(f).length && !ads.cid) return reject(400, 'Nothing to change.');
+    const requests = [];
+    if (Object.keys(f).length) requests.push(req('PATCH', `rest/v1/clients?id=eq.${b.client_id}`, f));
+    if (ads.cid) requests.push(linkAccount(ads.cid, b.client_id));
+    return run(requests, 'Client updated.');
   }
   case 'archive_client':
   case 'unarchive_client': {

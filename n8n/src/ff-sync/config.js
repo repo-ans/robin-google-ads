@@ -1,9 +1,7 @@
-// Non-secret settings for ff-sync. Every secret lives in an n8n credential:
-//   FF Supabase (service role)       - Supabase node/HTTP credential
-//   FF Google OAuth refresh          - Custom Auth: client id/secret + refresh token
-//   FF Google Ads developer token    - Custom Auth: developer-token header
-//   FF OpenAI                        - AI suggestions
-//   FF Slack                         - Slack note (bot token)
+// Non-secret settings for ff-sync.
+//   n8n credentials: FF Supabase (service role), FF OpenAI, FF Slack (optional).
+//   Google Ads values (developer token, OAuth client, refresh token, MCC id) are
+//   entered by Rob on the dashboard Settings page and read by "Get Google Ads secrets".
 //
 // This node also works out how the run was started:
 //   - "Trigger: daily" / "Trigger: weekly" pass { ff_trigger, mode }
@@ -14,7 +12,6 @@
 const SETTINGS = {
   SUPABASE_URL: 'https://SET-ME.supabase.co',
   SUPABASE_ANON_KEY: 'SET-ME', // public anon key, used only as apikey for GET /auth/v1/user
-  MCC_ID: 'SET-ME', // FF manager account, 10 digits, no dashes
   GOOGLE_ADS_API_VERSION: 'v25', // one place to bump the API version
   ALLOWED_ROLES: ['rob_admin', 'ff_staff'], // who may press Sync Now
   SLACK_CHANNEL: '', // e.g. '#ff-ads'; leave empty for no Slack note
@@ -41,13 +38,10 @@ if (fromWebhook) {
   mode = 'weekly';
 }
 
-const mcc = String(SETTINGS.MCC_ID).replace(/-/g, '');
-
 return [
   {
     json: {
       ...SETTINGS,
-      MCC_ID: /^[0-9]{10}$/.test(mcc) ? mcc : '',
       trigger,
       mode,
       only_customer_id: onlyCustomerId,

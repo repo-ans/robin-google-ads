@@ -15,6 +15,8 @@ export type Client = {
   slug: string;
   website_url: string | null;
   phone: string | null;
+  contact_name: string | null;
+  contact_email: string | null;
   towns: string[];
   service_area_notes: string | null;
   process: "funeral_home" | "online_cremation";
@@ -386,4 +388,6 @@ export const actions = {
       "ff/geo-target-suggest", { query, country }),
   build: <T = unknown>(body: Record<string, unknown>) => callN8n<T>("ff/build-campaign", body),
   deleteCampaign: (campaign_row_id: string) => callN8n<{ ok: true }>("ff/delete-campaign", { campaign_row_id }),
+  googleAdsSettings: (body: { action: "test" } | { action: "save"; values: Record<string, string> } | { action: "exchange_code"; code: string; redirect_uri: string }) =>
+    callN8n<{ ok: boolean; message: string }>("ff/google-ads-settings", body),
 };

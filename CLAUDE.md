@@ -51,8 +51,9 @@ Dashboard button -> n8n webhook (JWT + role check) -> Google Ads and/or Supabase
    or audit files. Search terms pass the name filter before storage (PLAN.md section 5.4).
    Case lists are never stored in Supabase - counts only - and are deleted after upload.
    Never store caller phone numbers or caller area codes.
-5. **Secrets stay out of code.** n8n credentials (PLAN.md 3.5) and Netlify env vars only. Never in code, workflow
-   JSON, Supabase tables or the browser. The service role key never reaches the browser.
+5. **Secrets stay out of code.** Google Ads values in Supabase `private.google_ads_secrets` (entered by Rob on the
+   Settings page, readable only by n8n); everything else in n8n credentials (PLAN.md 3.5). Never in code, workflow
+   JSON, public tables or the browser. The service role key never reaches the browser.
 6. **Calm tone.** Generated copy uses plain hyphens and no emoji. This applies to UI text, AI prompts, Slack notes and audits.
 7. **No call recording, whisper or phone menu.** At-need calls ring straight through.
 

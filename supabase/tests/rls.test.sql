@@ -301,8 +301,11 @@ from unnest(array[
   'ff_action_context(''chat'', ''99999999-0000-0000-0000-000000000001'')',
   'ff_build_context(''99999999-0000-0000-0000-000000000001'')',
   'ff_audit_data(''1111111111'')',
-  'ff_keyword_research_targets(null)'
+  'ff_keyword_research_targets(null)',
+  'ff_google_ads_secrets()',
+  'ff_set_google_ads_secrets(''{}''::jsonb, null)'
 ]) f;
+select throws_ok('select * from private.google_ads_secrets', '42501', null, 'rob_admin cannot read private.google_ads_secrets');
 
 -- ---------------------------------------------------------------------------
 -- 11. Dashboard functions respect RLS (security invoker)
@@ -323,6 +326,23 @@ select is((select count(*) from public.dash_search_terms('2222222222', '10', cur
           0::bigint, 'viewer A gets no search terms for account B');
 select is((select count(*) from public.dash_search_terms('1111111111', '10', current_date - 30, current_date)),
           1::bigint, 'viewer A gets its own search terms');
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- 12. Google Ads settings status: agency sees 5 rows and no secret values;
+--     a client login sees nothing (migration 9)
+-- ---------------------------------------------------------------------------
+insert into private.google_ads_secrets (name, value) values
+  ('client_secret', 'GOCSPX-test-secret'), ('refresh_token', '1//test-refresh'), ('developer_token', 'devtoken1234');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","role":"authenticated"}', true);
+select is((select count(*) from public.google_ads_connection_status()), 5::bigint, 'ff_staff sees the 5 Google Ads settings');
+select is((select count(*) from public.google_ads_connection_status() where hint like '%GOCSPX%' or hint like '%1//%'),
+          0::bigint, 'client secret and refresh token are never shown');
+select is((select hint from public.google_ads_connection_status() where name = 'developer_token'), '...1234',
+          'developer token shows only its last 4 characters');
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000c","role":"authenticated"}', true);
+select is((select count(*) from public.google_ads_connection_status()), 0::bigint, 'a client login sees no Google Ads settings');
 reset role;
 
 select * from finish();

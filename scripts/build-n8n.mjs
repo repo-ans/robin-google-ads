@@ -8,9 +8,11 @@
 //
 // Credentials referenced (create them once in n8n, same names):
 //   FF Supabase (service role)     Supabase API       - project URL + service role key
-//   FF Google OAuth refresh        Custom Auth        - {"body":{"client_id":"..","client_secret":"..","refresh_token":"..","grant_type":"refresh_token"}}
-//   FF Google Ads developer token  Custom Auth        - {"headers":{"developer-token":".."}}
 //   FF OpenAI                      OpenAI             - FF-owned API key
+// Google Ads values (developer token, OAuth client id/secret, refresh token,
+// MCC id) are NOT n8n credentials: Rob enters them on the dashboard Settings
+// page, they are stored in Supabase private.google_ads_secrets, and each
+// workflow reads them with "Get Google Ads secrets" (PLAN.md 3.5).
 //   FF Slack                       Slack API          - bot token (optional)
 //   FF DataForSEO                  Basic Auth         - DataForSEO API login + password
 
@@ -24,8 +26,6 @@ const n8nDir = join(root, "n8n");
 
 const CRED = {
   supabase: { supabaseApi: { id: "", name: "FF Supabase (service role)" } },
-  googleOAuth: { httpCustomAuth: { id: "", name: "FF Google OAuth refresh" } },
-  googleDev: { httpCustomAuth: { id: "", name: "FF Google Ads developer token" } },
   openai: { openAiApi: { id: "", name: "FF OpenAI" } },
   slack: { slackApi: { id: "", name: "FF Slack" } },
   dataforseo: { httpBasicAuth: { id: "", name: "FF DataForSEO" } },
@@ -105,9 +105,6 @@ class Workflow {
     if (p.cred === "supabase") {
       parameters.authentication = "predefinedCredentialType";
       parameters.nodeCredentialType = "supabaseApi";
-    } else if (p.cred === "googleOAuth" || p.cred === "googleDev") {
-      parameters.authentication = "genericCredentialType";
-      parameters.genericAuthType = "httpCustomAuth";
     } else if (p.cred === "dataforseo") {
       parameters.authentication = "genericCredentialType";
       parameters.genericAuthType = "httpBasicAuth";
@@ -159,16 +156,38 @@ class Workflow {
       jsonBody: "={{ JSON.stringify($json.body ?? {}) }}", full: true, neverError: true,
     }, { onError: "continueRegularOutput", ...(notes ? { notes } : {}) });
   }
+  // Google Ads settings saved on the dashboard (Settings page), read from
+  // Supabase with the service role. Runs once per execution.
+  googleSecrets(name = "Get Google Ads secrets", pos = [0, 0]) {
+    return this.sb(name, pos, "POST", "rpc/ff_google_ads_secrets", {
+      executeOnce: true,
+      notes: "Developer token, OAuth client id/secret, refresh token and MCC id, entered by Rob on the dashboard Settings page (stored in Supabase private.google_ads_secrets - never readable by the browser).",
+    }, { body: "={}" });
+  }
+  // Same request as the reference "Refresh Google Ads token": POST, form-urlencoded,
+  // four body fields, no authentication - the values come from "Get Google Ads secrets".
   googleToken(name, pos) {
-    return this.http(name, pos, {
-      method: "POST", cred: "googleOAuth", url: "https://oauth2.googleapis.com/token",
-      jsonBody: "={}", neverError: true,
-    }, { notes: "OAuth refresh. client_id, client_secret and refresh_token come from the Custom Auth credential 'FF Google OAuth refresh' - never from code or Supabase." });
+    const v = (k) => `={{ $('Get Google Ads secrets').first().json.${k} }}`;
+    return this.add({
+      name, type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: pos,
+      parameters: {
+        method: "POST", url: "https://oauth2.googleapis.com/token",
+        sendBody: true, contentType: "form-urlencoded",
+        bodyParameters: { parameters: [
+          { name: "client_id", value: v("client_id") },
+          { name: "client_secret", value: v("client_secret") },
+          { name: "refresh_token", value: v("refresh_token") },
+          { name: "grant_type", value: "refresh_token" },
+        ] },
+        options: { response: { response: { neverError: true } } },
+      },
+      notes: "OAuth refresh, same as the reference. Values from 'Get Google Ads secrets'. Test: Execute step - the output must contain access_token.",
+    });
   }
   googleAds(name, pos, { url, body, token, login, text = false, batch, timeout = 120000, notes, extra = {} }) {
     return this.http(name, pos, {
-      method: "POST", cred: "googleDev", url,
-      headers: `={{ JSON.stringify(Object.assign({ "Authorization": "Bearer " + ($('${token}').first().json.access_token || 'missing'), "Content-Type": "application/json" }, ${login} ? { "login-customer-id": ${login} } : {})) }}`,
+      method: "POST", url,
+      headers: `={{ JSON.stringify(Object.assign({ "Authorization": "Bearer " + ($('${token}').first().json.access_token || 'missing'), "developer-token": $('Get Google Ads secrets').first().json.developer_token || '', "Content-Type": "application/json" }, ${login} ? { "login-customer-id": ${login} } : {})) }}`,
       jsonBody: body, full: true, neverError: true, text, batch, timeout,
     }, { ...(notes ? { notes } : {}), ...extra });
   }
@@ -318,7 +337,7 @@ function buildSync() {
     parameters: { httpMethod: "POST", path: "ff/sync-now", responseMode: "responseNode", options: { allowedOrigins: "http://localhost:5173" } },
     notes: "Sync Now. responseMode responseNode: the Auth check block answers 401/403, otherwise 'Respond: accepted' answers 202 and the sync carries on.",
   });
-  wf.code("Config", W, "config.js", P(2, 1), { notes: "Set SUPABASE_URL, SUPABASE_ANON_KEY, MCC_ID (and SLACK_CHANNEL if wanted) after import." });
+  wf.code("Config", W, "config.js", P(2, 1), { notes: "Set SUPABASE_URL and SUPABASE_ANON_KEY (and SLACK_CHANNEL if wanted) after import. The MCC id is entered on the dashboard Settings page." });
   wf.if("Manual run?", "$('Config').first().json.trigger === 'manual'", P(3, 1));
   AUTH_NAMES.forEach((name, i) => {
     const copy = JSON.parse(JSON.stringify(whoami.nodes.find((n) => n.name === name)));
@@ -339,11 +358,12 @@ function buildSync() {
     prefer: "return=representation",
     body: "={{ JSON.stringify({ trigger: $('Config').first().json.trigger, requested_by: $('Config').first().json.trigger === 'manual' ? $('Auth: check role').first().json.user.user_id : null }) }}",
   });
+  wf.googleSecrets("Get Google Ads secrets", P(10, 0));
   wf.googleToken("Refresh Google token", P(11, 1));
   wf.googleAds("Get MCC accounts", P(12, 1), {
-    url: `=https://googleads.googleapis.com/${API_V}/customers/{{ $('Config').first().json.MCC_ID || '0000000000' }}/googleAds:searchStream`,
+    url: `=https://googleads.googleapis.com/${API_V}/customers/{{ $('Get Google Ads secrets').first().json.mcc_id || '0000000000' }}/googleAds:searchStream`,
     body: "={{ JSON.stringify({ query: \"SELECT customer_client.id, customer_client.descriptive_name, customer_client.currency_code, customer_client.time_zone, customer_client.status, customer_client.manager, customer_client.level, customer_client.test_account FROM customer_client WHERE customer_client.manager = false\" }) }}",
-    token: "Refresh Google token", login: "$('Config').first().json.MCC_ID", text: true,
+    token: "Refresh Google token", login: "$('Get Google Ads secrets').first().json.mcc_id", text: true,
     notes: "Asks the MCC which client accounts it manages. Read only.",
   });
   wf.code("Build account upserts", W, "build-account-upserts.js", P(13, 1));
@@ -438,7 +458,7 @@ function buildSync() {
   wf.connect("Auth: allowed?", "Respond: accepted", 0);
   wf.connect("Auth: allowed?", "Respond: denied", 1);
   wf.connect("Respond: accepted", "Start sync run");
-  wf.chain("Start sync run", "Refresh Google token", "Get MCC accounts", "Build account upserts", "Upsert accounts",
+  wf.chain("Start sync run", "Get Google Ads secrets", "Refresh Google token", "Get MCC accounts", "Build account upserts", "Upsert accounts",
     "Get accounts to sync", "Prepare account list", "Any accounts?");
   wf.connect("Any accounts?", "Loop over accounts", 0);
   wf.connect("Any accounts?", "Load run results", 1);
@@ -470,6 +490,7 @@ function buildGeo() {
     doc: "ff-geo-target-suggest: location autocomplete for the campaign builder (reference geo-target-suggest). Read only.",
   });
   const ok = validated(wf, allowed, { workflow: W, pos: P(8, 1) });
+  wf.googleSecrets("Get Google Ads secrets", P(10, 0));
   wf.googleToken("Refresh Google token", P(10, 1));
   wf.googleAds("Suggest locations", P(11, 1), {
     url: `=https://googleads.googleapis.com/${API_V}/geoTargetConstants:suggest`,
@@ -478,8 +499,8 @@ function buildGeo() {
     notes: "geoTargetConstants:suggest is global - no customer id and no login-customer-id.",
   });
   wf.code("Format suggestions", W, "format.js", P(12, 1));
-  wf.connect(ok, "Refresh Google token", 0);
-  wf.chain("Refresh Google token", "Suggest locations", "Format suggestions", "Respond");
+  wf.connect(ok, "Get Google Ads secrets", 0);
+  wf.chain("Get Google Ads secrets", "Refresh Google token", "Suggest locations", "Format suggestions", "Respond");
   return wf.toJSON();
 }
 
@@ -615,6 +636,7 @@ function buildApply() {
     { body: "={{ JSON.stringify({ p_source: $json.source, p_source_id: $json.source_id }) }}" });
   wf.code("Plan change", W, "plan.js", P(11, 1));
   wf.if("Allowed?", "$json.ok === true", P(12, 1));
+  wf.googleSecrets("Get Google Ads secrets", P(13, -1));
   wf.googleToken("Refresh Google token", P(13, 0));
   const mutateUrl = `=https://googleads.googleapis.com/${API_V}/customers/{{ $('Plan change').first().json.customer_id }}/{{ $('Plan change').first().json.url_suffix }}`;
   wf.googleAds("Validate change", P(14, 0), {
@@ -632,9 +654,9 @@ function buildApply() {
   writeTail(wf, { records: "Plan records", recordsFile: "records.js", workflow: W, pos: P(18, 1) });
   wf.connect(ok, "Get action context", 0);
   wf.chain("Get action context", "Plan change", "Allowed?");
-  wf.connect("Allowed?", "Refresh Google token", 0);
+  wf.connect("Allowed?", "Get Google Ads secrets", 0);
   wf.connect("Allowed?", "Plan records", 1);
-  wf.chain("Refresh Google token", "Validate change", "Check validation", "Valid?");
+  wf.chain("Get Google Ads secrets", "Refresh Google token", "Validate change", "Check validation", "Valid?");
   wf.connect("Valid?", "Apply change", 0);
   wf.connect("Valid?", "Plan records", 1);
   wf.connect("Apply change", "Plan records");
@@ -654,6 +676,7 @@ function buildDelete() {
     { alwaysOutputData: true });
   wf.code("Plan removal", W, "plan.js", P(9, 1));
   wf.if("Allowed?", "$json.ok === true", P(10, 1));
+  wf.googleSecrets("Get Google Ads secrets", P(11, -1));
   wf.googleToken("Refresh Google token", P(11, 0));
   const url = `=https://googleads.googleapis.com/${API_V}/customers/{{ $('Plan removal').first().json.customer_id }}/campaigns:mutate`;
   wf.googleAds("Validate removal", P(12, 0), {
@@ -670,9 +693,9 @@ function buildDelete() {
   writeTail(wf, { records: "Plan records", recordsFile: "records.js", workflow: W, pos: P(16, 1) });
   wf.connect(allowed, "Get campaign", 0);
   wf.chain("Get campaign", "Plan removal", "Allowed?");
-  wf.connect("Allowed?", "Refresh Google token", 0);
+  wf.connect("Allowed?", "Get Google Ads secrets", 0);
   wf.connect("Allowed?", "Plan records", 1);
-  wf.chain("Refresh Google token", "Validate removal", "Check validation", "Valid?");
+  wf.chain("Get Google Ads secrets", "Refresh Google token", "Validate removal", "Check validation", "Valid?");
   wf.connect("Valid?", "Remove campaign", 0);
   wf.connect("Valid?", "Plan records", 1);
   wf.connect("Remove campaign", "Plan records");
@@ -717,6 +740,7 @@ function buildBuild() {
   wf.if("Allowed?", "$json.ok === true", P(14, 0));
   wf.sb("Mark building", P(15, -1), "PATCH", "campaign_builds?id=eq.{{ $json.build_id }}", {},
     { prefer: "return=minimal", body: "={{ JSON.stringify({ status: 'building', error: null }) }}" });
+  wf.googleSecrets("Get Google Ads secrets", P(16, -2));
   wf.googleToken("Refresh Google token", P(16, -1));
   wf.googleAds("Find FF negative list", P(17, -1), {
     url: `=https://googleads.googleapis.com/${API_V}/customers/{{ $('Plan build').first().json.customer_id }}/googleAds:searchStream`,
@@ -747,7 +771,7 @@ function buildBuild() {
   wf.chain("Get build context", "Plan build", "Allowed?");
   wf.connect("Allowed?", "Mark building", 0);
   wf.connect("Allowed?", "Plan records", 1);
-  wf.chain("Mark building", "Refresh Google token", "Find FF negative list", "Build operations", "Validate build", "Check validation", "Valid?");
+  wf.chain("Mark building", "Get Google Ads secrets", "Refresh Google token", "Find FF negative list", "Build operations", "Validate build", "Check validation", "Valid?");
   wf.connect("Valid?", "Create campaign", 0);
   wf.connect("Valid?", "Plan records", 1);
   wf.connect("Create campaign", "Plan records");
@@ -769,7 +793,8 @@ function buildClientAdmin() {
   const ok = validated(wf, "Load target login", { workflow: W, file: "plan.js", name: "Plan", pos: P(9, 1) });
   wf.if("Create login?", "$json.kind === 'create_login'", P(11, 1));
   // generic requests
-  wf.sbGeneric("Run requests", P(12, 3), "", "Auth Admin API (auth/v1/admin/users) and PostgREST, both with the service role credential.");
+  wf.sbGeneric("Run requests", P(12, 3), "", "Auth Admin API (auth/v1/admin/users) and PostgREST, both with the service role credential. One request at a time, in order (a new client row before its Google Ads account link).");
+  wf.nodes.find((n) => n.name === "Run requests").parameters.options.batching = { batch: { batchSize: 1, batchInterval: 0 } };
   wf.code("Summarize", W, "summarize.js", P(13, 3));
   // create login
   wf.http("Create auth user", P(12, 0), {
@@ -887,6 +912,7 @@ function buildDataForSEO() {
     name: "Respond: accepted", type: "n8n-nodes-base.respondToWebhook", typeVersion: 1.1, position: P(8, 2),
     parameters: { respondWith: "json", responseBody: "={{ JSON.stringify({ status: 'started' }) }}", options: { responseCode: 202 } },
   });
+  wf.googleSecrets("Get Google Ads secrets", P(9, 0));
   wf.sb("Get research targets", P(9, 1), "POST", "rpc/ff_keyword_research_targets", { alwaysOutputData: true },
     { body: "={{ JSON.stringify({ p_client_id: $('Config').first().json.only_client_id }) }}" });
   wf.code("Prepare targets", W, "prepare-targets.js", P(10, 1));
@@ -918,12 +944,12 @@ function buildDataForSEO() {
   wf.connect("Webhook", "Config");
   wf.connect("Config", "Manual run?");
   wf.connect("Manual run?", "Auth: read token", 0);
-  wf.connect("Manual run?", "Get research targets", 1);
+  wf.connect("Manual run?", "Get Google Ads secrets", 1);
   wf.chain(...AUTH_NAMES.slice(0, 5));
   wf.connect("Auth: allowed?", "Respond: accepted", 0);
   wf.connect("Auth: allowed?", "Respond: denied", 1);
-  wf.connect("Respond: accepted", "Get research targets");
-  wf.chain("Get research targets", "Prepare targets", "Anything to research?");
+  wf.connect("Respond: accepted", "Get Google Ads secrets");
+  wf.chain("Get Google Ads secrets", "Get research targets", "Prepare targets", "Anything to research?");
   wf.connect("Anything to research?", "Loop over clients", 0);
   wf.connect("Anything to research?", "Done", 1);
   wf.connect("Loop over clients", "Done", 0);
@@ -931,6 +957,66 @@ function buildDataForSEO() {
   wf.chain("Refresh Google token", "Build requests", "DataForSEO search volume", "Google keyword metrics", "Related seeds",
     "DataForSEO related keywords", "Map results", "Upsert keyword data", "Loop over clients");
   return wf.toJSON();
+}
+
+// ================================================================== ff-google-ads-settings
+function buildGoogleAdsSettings() {
+  const W = "ff-google-ads-settings";
+  const wf = new Workflow(W);
+  const allowed = webhookFront(wf, {
+    path: "ff/google-ads-settings", roles: AGENCY, settings: { GOOGLE_ADS_API_VERSION: "v25" },
+    doc: "ff-google-ads-settings: the Google Ads API connection from the dashboard Settings page. Rob saves values and connects with Google; FF staff can test. Values go to Supabase private.google_ads_secrets and are never sent back to the browser.",
+  });
+  const ok = validated(wf, allowed, { workflow: W, pos: P(8, 1) });
+  wf.if("Save?", "$json.action === 'save'", P(10, 1));
+  wf.sb("Save settings", P(11, 0), "POST", "rpc/ff_set_google_ads_secrets", {},
+    { full: true, neverError: true, body: "={{ JSON.stringify({ p_values: $json.values, p_user: $('Auth: check role').first().json.user.user_id }) }}" });
+  wf.code("Save result", W, "save-result.js", P(12, 0));
+  wf.googleSecrets("Get Google Ads secrets", P(11, 2));
+  wf.if("Connect with Google?", "$('Validate input').first().json.action === 'exchange_code'", P(12, 2));
+  wf.add({
+    name: "Exchange code", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: P(13, 1),
+    parameters: {
+      method: "POST", url: "https://oauth2.googleapis.com/token",
+      sendBody: true, contentType: "form-urlencoded",
+      bodyParameters: { parameters: [
+        { name: "code", value: "={{ $('Validate input').first().json.code }}" },
+        { name: "client_id", value: "={{ $('Get Google Ads secrets').first().json.client_id }}" },
+        { name: "client_secret", value: "={{ $('Get Google Ads secrets').first().json.client_secret }}" },
+        { name: "redirect_uri", value: "={{ $('Validate input').first().json.redirect_uri }}" },
+        { name: "grant_type", value: "authorization_code" },
+      ] },
+      options: { response: { response: { fullResponse: true, neverError: true } } },
+    },
+    notes: "Google sign-in code -> refresh token. This workflow keeps no execution data.",
+  });
+  wf.code("Check exchange", W, "check-exchange.js", P(14, 1));
+  wf.if("Got refresh token?", "$json.ok === true", P(15, 1));
+  wf.sb("Save refresh token", P(16, 0), "POST", "rpc/ff_set_google_ads_secrets", {},
+    { full: true, neverError: true, body: "={{ JSON.stringify({ p_values: { refresh_token: $('Check exchange').first().json.refresh_token }, p_user: $('Auth: check role').first().json.user.user_id }) }}" });
+  wf.code("Connect result", W, "connect-result.js", P(17, 0));
+  wf.googleToken("Refresh Google token", P(13, 3));
+  wf.http("List accessible accounts", P(14, 3), {
+    method: "GET", url: `=https://googleads.googleapis.com/${API_V}/customers:listAccessibleCustomers`,
+    headers: "={{ JSON.stringify({ \"Authorization\": \"Bearer \" + ($('Refresh Google token').first().json.access_token || 'missing'), \"developer-token\": $('Get Google Ads secrets').first().json.developer_token || '' }) }}",
+    full: true, neverError: true,
+  }, { notes: "Read only: which Google Ads accounts this login can reach." });
+  wf.code("Test result", W, "test-result.js", P(15, 3));
+
+  wf.connect(ok, "Save?", 0);
+  wf.connect("Save?", "Save settings", 0);
+  wf.connect("Save?", "Get Google Ads secrets", 1);
+  wf.chain("Save settings", "Save result", "Respond");
+  wf.chain("Get Google Ads secrets", "Connect with Google?");
+  wf.connect("Connect with Google?", "Exchange code", 0);
+  wf.connect("Connect with Google?", "Refresh Google token", 1);
+  wf.chain("Exchange code", "Check exchange", "Got refresh token?");
+  wf.connect("Got refresh token?", "Save refresh token", 0);
+  wf.connect("Got refresh token?", "Respond", 1);
+  wf.chain("Save refresh token", "Connect result", "Respond");
+  wf.chain("Refresh Google token", "List accessible accounts", "Test result", "Respond");
+  // Tokens and sign-in codes pass through here: keep no execution data at all.
+  return wf.toJSON({ saveDataErrorExecution: "none", saveManualExecutions: false });
 }
 
 // ------------------------------------------------------------------ write all
@@ -947,6 +1033,7 @@ const builders = {
   "ff-review-actions": buildReview,
   "ff-audit": buildAudit,
   "ff-dataforseo": buildDataForSEO,
+  "ff-google-ads-settings": buildGoogleAdsSettings,
 };
 
 for (const [name, build] of Object.entries(builders)) {

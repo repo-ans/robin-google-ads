@@ -153,24 +153,26 @@ Phase 4 adds `scripts/rls-e2e.test.ts`: real logins through Supabase Auth agains
 proving the same isolation through PostgREST and through the n8n webhooks (viewer A calling a webhook
 with B's ids gets 403).
 
-### 3.5 Secrets (decided 2026-09-30: n8n credentials)
+### 3.5 Secrets (decided 2026-09-30)
 
-Every secret is an n8n credential. Nothing secret is in Supabase, the repo, the workflow JSON or the browser.
+| Secret | Where | Entered by |
+|---|---|---|
+| Google Ads developer token, OAuth client id + secret, refresh token, MCC id | Supabase `private.google_ads_secrets` (migration 9) | Rob, on the dashboard Settings page ("Connect with Google" creates the refresh token) |
+| Supabase service role key | n8n credential "FF Supabase (service role)" | FF, in n8n |
+| OpenAI key | n8n credential "FF OpenAI" | FF, in n8n |
+| Slack bot token | n8n credential "FF Slack" | FF, in n8n |
+| DataForSEO login + password | n8n credential "FF DataForSEO" | FF, in n8n |
 
-| n8n credential | Type | Holds | Used by |
-|---|---|---|---|
-| FF Supabase (service role) | Supabase API | project URL + service role key | every workflow |
-| FF Google OAuth refresh | Custom Auth | `{"body":{"client_id","client_secret","refresh_token","grant_type":"refresh_token"}}` | the token refresh call |
-| FF Google Ads developer token | Custom Auth | `{"headers":{"developer-token":"..."}}` | every Google Ads call |
-| FF OpenAI | OpenAI | FF-owned API key (model gpt-5-mini, as the reference) | chat, drafts, sync suggestions |
-| FF Slack | Slack API | bot token (optional) | sync note, new-suggestion note |
-| FF DataForSEO | Basic Auth | API login + password | ff-dataforseo |
-
-The HTTP node takes one credential, and a Google Ads call needs two secrets (the access token and the developer
-token). So the refresh call uses one Custom Auth credential, and every Google Ads call uses the developer-token
-credential and adds the fresh access token as a header. `scripts/check-n8n.mjs` fails on any credential that is
-not in this list. Workflows do not keep data from successful executions; `ff-client-admin` keeps no execution
-data at all, because passwords pass through it.
+How the Google Ads values stay safe:
+- Schema `private` is not exposed by the API; the table has RLS on with no policies and no privileges for
+  `anon`/`authenticated`.
+- The browser never reads a value. `google_ads_connection_status()` (agency roles only) returns set / not set,
+  when, by whom, and a safe hint (client id, MCC id, last 4 characters of the developer token). RLS tests cover it.
+- Writes go through n8n `ff-google-ads-settings` (rob_admin) into `ff_set_google_ads_secrets()` (service role only).
+- n8n reads them with `ff_google_ads_secrets()` (service role only) in the "Get Google Ads secrets" node, then
+  refreshes the OAuth token like the reference did.
+- Workflows keep no data from successful executions; `ff-google-ads-settings` and `ff-client-admin` keep no
+  execution data at all. Error executions of other workflows can contain the values, so n8n access stays FF-only.
 
 ### 3.6 Login flows
 

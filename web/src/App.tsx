@@ -14,6 +14,8 @@ const AuditPage = lazy(() => import("./pages/AuditPage"));
 const BuilderPage = lazy(() => import("./pages/BuilderPage"));
 const AccountPage = lazy(() => import("./pages/AccountPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const GoogleCallbackPage = lazy(() => import("./pages/GoogleCallbackPage"));
+const SystemPage = lazy(() => import("./pages/SystemPage"));
 import NotFoundPage from "./pages/NotFoundPage";
 import type { AppRole } from "./lib/types";
 
@@ -41,6 +43,8 @@ export default function App() {
           <Route path="/dashboard/clients/:clientId/builder" element={guard(<BuilderPage />, AGENCY)} />
           <Route path="/account" element={guard(<AccountPage />)} />
           <Route path="/settings" element={guard(<SettingsPage />, AGENCY)} />
+          <Route path="/settings/system" element={guard(<SystemPage />, AGENCY)} />
+          <Route path="/settings/google-callback" element={guard(<GoogleCallbackPage />, ["rob_admin"])} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
         </Suspense>
