@@ -370,6 +370,9 @@ function buildSync() {
   wf.sb("Upsert accounts", P(14, 1), "POST", "ad_accounts?on_conflict=customer_id",
     { notes: "Upsert on customer_id. client_id is never sent, so assignments by FF staff are kept. New accounts land as Unassigned." },
     { prefer: "resolution=merge-duplicates,return=minimal", body: "={{ JSON.stringify($json.rows) }}", full: true, neverError: true });
+  wf.sb("Create clients for new accounts", P(14, 0), "POST", "rpc/ff_auto_create_clients",
+    { executeOnce: true, notes: "Every Google Ads account is a client: an account with no client gets one, named after the account (closed accounts are archived)." },
+    { body: "={}", full: true, neverError: true });
   wf.sb("Get accounts to sync", P(15, 1), "GET",
     "ad_accounts?select=customer_id,login_customer_id,time_zone,first_synced_at,clients(towns,own_brand_terms,competitor_terms)&sync_enabled=eq.true&is_manager=eq.false&or=(status.is.null,status.eq.ENABLED)&order=customer_id{{ $('Config').first().json.only_customer_id ? '&customer_id=eq.' + $('Config').first().json.only_customer_id : '' }}",
     { alwaysOutputData: true, notes: "alwaysOutputData: an empty table must not halt the workflow (reference lesson)." });
@@ -459,7 +462,7 @@ function buildSync() {
   wf.connect("Auth: allowed?", "Respond: denied", 1);
   wf.connect("Respond: accepted", "Start sync run");
   wf.chain("Start sync run", "Get Google Ads secrets", "Refresh Google token", "Get MCC accounts", "Build account upserts", "Upsert accounts",
-    "Get accounts to sync", "Prepare account list", "Any accounts?");
+    "Create clients for new accounts", "Get accounts to sync", "Prepare account list", "Any accounts?");
   wf.connect("Any accounts?", "Loop over accounts", 0);
   wf.connect("Any accounts?", "Load run results", 1);
   wf.connect("Loop over accounts", "Load run results", 0);

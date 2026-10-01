@@ -2,7 +2,7 @@
   "name": "ff-sync",
   "nodes": [
     {
-      "id": "babfee55-49d5-4678-98c5-75e1c243930c",
+      "id": "775b04c4-0fda-4b37-ae49-1ede57a67e4a",
       "name": "Schedule: daily 06:00",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
@@ -22,7 +22,7 @@
       "notes": "Daily sync, 30-day window, in the workflow time zone (Workflow settings > Timezone)."
     },
     {
-      "id": "6e7642a6-52c3-40f0-ba3a-0c078f8595c5",
+      "id": "948032bc-941a-42f5-bb12-5d57d79ec833",
       "name": "Schedule: weekly Sunday 07:00",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
@@ -46,7 +46,7 @@
       "notes": "Weekly 90-day reconcile: conversions keep arriving for up to 90 days after the click."
     },
     {
-      "id": "5b8332d4-3637-4ddc-b4bb-28ec68c4fa00",
+      "id": "59baa45c-1d56-4fd2-9aa0-9cb00a45f271",
       "name": "Trigger: daily",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -59,7 +59,7 @@
       }
     },
     {
-      "id": "6189c19f-e58b-471a-a2c6-1b31342dca77",
+      "id": "ea4ad7ff-82e4-4e07-9445-6e5157967ebf",
       "name": "Trigger: weekly",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -72,7 +72,7 @@
       }
     },
     {
-      "id": "a89b4125-b5c7-4a55-8a62-ae9fa50f0128",
+      "id": "92e0cc30-cb0d-4bd2-96dd-7b31abd9ac04",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -92,7 +92,7 @@
       "notes": "Sync Now. responseMode responseNode: the Auth check block answers 401/403, otherwise 'Respond: accepted' answers 202 and the sync carries on."
     },
     {
-      "id": "f5f201fa-cec0-4aa9-b634-10d0daca5fd2",
+      "id": "2f28b37a-e914-430a-b61b-ae4848cc6f81",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -106,7 +106,7 @@
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY (and SLACK_CHANNEL if wanted) after import. The MCC id is entered on the dashboard Settings page."
     },
     {
-      "id": "d7926887-fc48-4b62-b064-57f315342f9b",
+      "id": "1ecdff1b-d42f-4e7a-8035-432cd1348899",
       "name": "Manual run?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -123,7 +123,7 @@
           },
           "conditions": [
             {
-              "id": "20327077-25b5-4c8c-b5e5-d95f9fa9ee80",
+              "id": "0edc09d7-9b8b-4420-8998-35402cb84351",
               "leftValue": "={{ $('Config').first().json.trigger === 'manual' }}",
               "rightValue": true,
               "operator": {
@@ -139,7 +139,7 @@
       }
     },
     {
-      "id": "5ed7050b-cf00-4134-90f6-7d1903f1d3a3",
+      "id": "57e24b31-e17b-4a23-9de7-7d204a63b724",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -153,7 +153,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "9d27efdc-3da6-4e5e-b185-5a5890e35a53",
+      "id": "58fb12a8-a413-48d5-bb52-c294d62f0399",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -189,7 +189,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "6421b237-3942-48fa-95f1-321d5cfb3eb5",
+      "id": "d8ea31c4-ef6d-49da-9d92-2302ea473fe4",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -234,7 +234,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "d2b309d4-a089-49f4-a0e7-c9a8beb8050d",
+      "id": "325fef5b-a5b6-43c1-b262-a0d6f62e3351",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -248,7 +248,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "e59d8467-3ade-4ba9-a8e3-5c98d7fa824a",
+      "id": "63431117-6cd8-48f7-96c3-b395439bb679",
       "parameters": {
         "conditions": {
           "options": {
@@ -281,7 +281,7 @@
       ]
     },
     {
-      "id": "454d05fa-7297-4322-8850-ee9a67123c28",
+      "id": "4639bdcc-2219-497d-9312-8b6281d2fb01",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -299,7 +299,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "c06b2278-14d4-40ea-bd92-e4adb7a934ca",
+      "id": "1d1a3143-3963-4fc2-85f7-1e468875cb37",
       "name": "Respond: accepted",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -316,7 +316,7 @@
       }
     },
     {
-      "id": "1eb44c37-f043-49e4-a852-f4124499e4ae",
+      "id": "6634ced0-0ed5-443d-b437-d01096275480",
       "name": "Start sync run",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -351,7 +351,7 @@
       }
     },
     {
-      "id": "1562735d-41df-40a4-9f7a-f5b116ead2c3",
+      "id": "e3da3e65-1ccf-4ab0-8a2e-baf1ca184e27",
       "name": "Get Google Ads secrets",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -379,7 +379,7 @@
       "notes": "Developer token, OAuth client id/secret, refresh token and MCC id, entered by Rob on the dashboard Settings page (stored in Supabase private.google_ads_secrets - never readable by the browser)."
     },
     {
-      "id": "c88a223e-0282-42eb-b18f-a0d129fc795f",
+      "id": "9d4d5748-b3ed-401f-84e0-4cf57d5f2599",
       "name": "Refresh Google token",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -423,7 +423,7 @@
       "notes": "OAuth refresh, same as the reference. Values from 'Get Google Ads secrets'. Test: Execute step - the output must contain access_token."
     },
     {
-      "id": "53a51c36-30fd-41f3-ac5b-a22f5c7aa5d8",
+      "id": "60ee8112-15e2-4d02-9522-0fbc8ca31cfd",
       "name": "Get MCC accounts",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -454,7 +454,7 @@
       "notes": "Asks the MCC which client accounts it manages. Read only."
     },
     {
-      "id": "4edefb26-e4c0-42a7-b4f1-28bafb68642d",
+      "id": "2060d51a-2f80-49c4-84f6-3110c4c4c889",
       "name": "Build account upserts",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -467,7 +467,7 @@
       }
     },
     {
-      "id": "03c8e344-c6f2-4811-88d0-2015ac81431b",
+      "id": "4c450d77-bf83-4a56-b6db-42e7188cf5e6",
       "name": "Upsert accounts",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -510,7 +510,42 @@
       "notes": "Upsert on customer_id. client_id is never sent, so assignments by FF staff are kept. New accounts land as Unassigned."
     },
     {
-      "id": "feec0056-c14d-4957-bdb1-a0b6125e56e9",
+      "id": "8e7612f8-390c-4a4d-a8f5-3b2440f05d65",
+      "name": "Create clients for new accounts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/rpc/ff_auto_create_clients",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "executeOnce": true,
+      "notes": "Every Google Ads account is a client: an account with no client gets one, named after the account (closed accounts are archived)."
+    },
+    {
+      "id": "51845bf7-a4ff-41cd-aa04-9f68d83be680",
       "name": "Get accounts to sync",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -535,7 +570,7 @@
       "notes": "alwaysOutputData: an empty table must not halt the workflow (reference lesson)."
     },
     {
-      "id": "35df9377-2416-4ce4-bdf8-2d42ed692dca",
+      "id": "9ae27008-fcd0-4527-9df2-cde093e4b5ee",
       "name": "Prepare account list",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -548,7 +583,7 @@
       }
     },
     {
-      "id": "8752b308-503e-4c94-835c-841fc22f5ac6",
+      "id": "dd3f7f9e-40d4-410f-bc69-bc6fe896598a",
       "name": "Any accounts?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -565,7 +600,7 @@
           },
           "conditions": [
             {
-              "id": "abf4bed5-36d9-49a4-b213-f65a30868aba",
+              "id": "3736165f-1f58-48d5-9118-f1b64f6a895a",
               "leftValue": "={{ !$json.none }}",
               "rightValue": true,
               "operator": {
@@ -581,7 +616,7 @@
       }
     },
     {
-      "id": "9b832582-2463-4858-8c52-95973190e3c6",
+      "id": "f61f5d16-80b8-4182-abe5-fa90c6f56358",
       "name": "Loop over accounts",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
@@ -596,7 +631,7 @@
       "notes": "One account per pass, so $('Loop over accounts').first() is always the current account. One account failing does not stop the others."
     },
     {
-      "id": "0c8b4b50-e4de-4095-8e82-66c6e6d73f46",
+      "id": "b7148360-9336-4be0-b592-f2c3aba01205",
       "name": "Account: refresh token",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -640,7 +675,7 @@
       "notes": "OAuth refresh, same as the reference. Values from 'Get Google Ads secrets'. Test: Execute step - the output must contain access_token."
     },
     {
-      "id": "cda3d287-cb9b-4fe2-a09b-a02271800ef2",
+      "id": "b16bb45f-2b88-4b64-8735-ce1b74d4cc40",
       "name": "Account: build queries",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -653,7 +688,7 @@
       }
     },
     {
-      "id": "98f74b7e-0001-479a-98eb-1b2172a5c239",
+      "id": "3b335bbf-c010-478d-aa39-9e96228b84ba",
       "name": "Google Ads search",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -691,7 +726,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "8cc18a74-e7eb-452b-b618-ca5f1906200b",
+      "id": "6a3dd643-fb62-475c-815b-bc9cce2abb62",
       "name": "Map and plan writes",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -705,7 +740,7 @@
       "notes": "Maps rows, applies the search term name filter, merges duplicate keys, chunks upserts. Matches responses to queries with itemMatching()."
     },
     {
-      "id": "4901bd4d-2912-4d43-85e2-5ebfb1550ad7",
+      "id": "de313a89-1c1d-4120-9879-a3236322943e",
       "name": "Write rows",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -749,7 +784,7 @@
       "notes": "PostgREST upsert on the natural key (replaces the reference's delete-then-create)."
     },
     {
-      "id": "d900c4bd-3fd7-44fd-8f61-48707a0274a3",
+      "id": "84236ffd-eb13-4307-a301-ed80b27999f9",
       "name": "Finish account",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -762,7 +797,7 @@
       }
     },
     {
-      "id": "734a66f1-5a97-442c-a147-b42767c1ee16",
+      "id": "d0f7e1b3-455d-417c-a19e-c7f649c5700a",
       "name": "Account cleanup",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -806,7 +841,7 @@
       "notes": "Soft-remove (removed_at), recommendation open/expired, the account's sync result, last_synced_at."
     },
     {
-      "id": "392e50f9-06b7-4ada-adee-f660bb5b006d",
+      "id": "67095b41-36c6-4915-8fa4-ede19d717a1f",
       "name": "Load run results",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -831,7 +866,7 @@
       "executeOnce": true
     },
     {
-      "id": "efb41aa2-cd26-4fd5-8ec4-e09c74a8d710",
+      "id": "fe6edae4-f80f-4e5f-8901-dfef3cd77a22",
       "name": "Summarize run",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -845,7 +880,7 @@
       "executeOnce": true
     },
     {
-      "id": "106a9b3a-d6d5-4cbe-a445-62e66d614296",
+      "id": "6239d741-de94-45d0-962a-0322d249cd35",
       "name": "Close sync run",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -887,7 +922,7 @@
       }
     },
     {
-      "id": "d9215f87-fc17-4edd-bf95-5a479f5458eb",
+      "id": "4ae17651-2ea5-4946-aa2b-e9ca844bfe9f",
       "name": "Get missing geo names",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -915,7 +950,7 @@
       "executeOnce": true
     },
     {
-      "id": "b2b15460-de79-4c51-b6fd-26f7f2cc7cba",
+      "id": "0c9ba40b-136e-4d89-bff7-65886a84faff",
       "name": "Build geo query",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -929,7 +964,7 @@
       "executeOnce": true
     },
     {
-      "id": "711e7265-8c8f-4cca-9703-4b43c23c8627",
+      "id": "9217d8a1-4cd4-4c9e-9d1b-b169d0b02550",
       "name": "Geo lookup needed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -946,7 +981,7 @@
           },
           "conditions": [
             {
-              "id": "f9a0bf82-494c-4811-a3c7-0d3a6c065bb6",
+              "id": "553f8f93-a1d1-4d40-84c7-df5c36e3e302",
               "leftValue": "={{ !$json.skip }}",
               "rightValue": true,
               "operator": {
@@ -962,7 +997,7 @@
       }
     },
     {
-      "id": "07fd6041-ba54-40b2-bc27-0e709d564cde",
+      "id": "3e3bc0a8-c05d-461b-b28d-b40da3c9045a",
       "name": "Refresh token (geo)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -1006,7 +1041,7 @@
       "notes": "OAuth refresh, same as the reference. Values from 'Get Google Ads secrets'. Test: Execute step - the output must contain access_token."
     },
     {
-      "id": "98e56ca4-ea27-4ddd-bbff-6c234d860a7e",
+      "id": "719fb2a4-586b-4d68-96f1-59358365416d",
       "name": "Search geo names",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -1036,7 +1071,7 @@
       }
     },
     {
-      "id": "02f5fb0a-0f6f-4ce2-b2cd-11482b8165ef",
+      "id": "d880ef15-610b-4b7d-9c08-1a7f66bb4840",
       "name": "Map geo names",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -1049,7 +1084,7 @@
       }
     },
     {
-      "id": "6deedfc9-929c-447f-bc16-8735f7314d6f",
+      "id": "2337b8fe-eeaf-46aa-86fa-91b1b4477045",
       "name": "Upsert geo names",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -1091,7 +1126,7 @@
       }
     },
     {
-      "id": "6027c9ad-93a9-4e56-9ecf-4a0a4c1267e0",
+      "id": "74b1805e-718e-4832-bdef-f1563abf3314",
       "name": "After geo",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
@@ -1102,7 +1137,7 @@
       "parameters": {}
     },
     {
-      "id": "5b852442-71b0-4b8d-a887-85064368ce3c",
+      "id": "07a63dbe-6441-4118-a680-7aea8b2128bf",
       "name": "Get alerts",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -1130,7 +1165,7 @@
       "executeOnce": true
     },
     {
-      "id": "416c7a67-685d-4df2-b83a-99074fcf4f5c",
+      "id": "3680a4fa-2b3c-4f7a-ae5d-ee2c9e59d2f8",
       "name": "Build Slack note",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -1144,7 +1179,7 @@
       "executeOnce": true
     },
     {
-      "id": "6932b3c6-2771-488c-9e43-3585eb9c2755",
+      "id": "0bb28dd9-73a8-43a6-b422-7f4d7f26b0b6",
       "name": "Send Slack note?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -1161,7 +1196,7 @@
           },
           "conditions": [
             {
-              "id": "9fbdd357-700c-411e-ad5e-426c675821a8",
+              "id": "c203c5aa-3401-4c82-9f91-f1b6f744fb04",
               "leftValue": "={{ !$json.skip }}",
               "rightValue": true,
               "operator": {
@@ -1177,7 +1212,7 @@
       }
     },
     {
-      "id": "d044de0e-35db-4361-baa2-c776d862554a",
+      "id": "9063644c-1a6c-4105-9b86-ffbc717d02a3",
       "name": "Send Slack note",
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.2,
@@ -1207,7 +1242,7 @@
       "notes": "Optional. Needs the 'FF Slack' credential and SLACK_CHANNEL in Config; a Slack failure never stops the workflow."
     },
     {
-      "id": "21f45ef5-fe99-4d26-82bb-bde8f640e1d0",
+      "id": "9668465c-9b75-4762-a4ee-56a73de37ea8",
       "name": "Get suggestion candidates",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -1235,7 +1270,7 @@
       "executeOnce": true
     },
     {
-      "id": "5da8ad2b-27de-483a-bcb1-de56039ac729",
+      "id": "facdd312-17cd-4270-bc3d-a2ef664d3e31",
       "name": "Prepare suggestion inputs",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -1248,7 +1283,7 @@
       }
     },
     {
-      "id": "8b5aac9a-3dc8-4848-9b63-8ab9ed2057ba",
+      "id": "04f1651a-a32f-4111-9852-d3728d128384",
       "name": "Anything to review?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -1265,7 +1300,7 @@
           },
           "conditions": [
             {
-              "id": "6687d4ca-4369-4a61-bc80-d9149d16e6d9",
+              "id": "4c45162e-d468-4273-ad30-d83ac894f48f",
               "leftValue": "={{ !$json.skip }}",
               "rightValue": true,
               "operator": {
@@ -1281,7 +1316,7 @@
       }
     },
     {
-      "id": "4118a8e8-c381-4009-9ac7-d23802b87e9b",
+      "id": "af79bced-c629-45b4-83f3-624b39b9af9c",
       "name": "Suggest (AI Agent)",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 1.7,
@@ -1301,7 +1336,7 @@
       "notes": "onError continueRegularOutput: a malformed model output must not stop the workflow (reference lesson). The next Code node treats it as no answer."
     },
     {
-      "id": "2077fef1-ef39-4b66-8bbc-a1f68f7d1aee",
+      "id": "5c5abad8-1a00-4b79-a32f-7beb6c00b588",
       "name": "Suggest (AI Agent) - OpenAI model",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.3,
@@ -1325,7 +1360,7 @@
       }
     },
     {
-      "id": "7294947d-d0e9-446e-b07d-fe9b8b7c5283",
+      "id": "28fe3b3c-cb99-4ec9-a5bb-2164d8153998",
       "name": "Suggest (AI Agent) - output format",
       "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
       "typeVersion": 1.2,
@@ -1339,7 +1374,7 @@
       }
     },
     {
-      "id": "91710f2c-1440-4119-a69a-2cda8a407ba2",
+      "id": "6f886a66-fe48-4ed7-9a75-505c61f1a71f",
       "name": "Prepare suggestions",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -1352,7 +1387,7 @@
       }
     },
     {
-      "id": "cb45d7fc-4c77-4b6c-a41b-1ebcaa55d64f",
+      "id": "cd0ed5bc-5f69-4dca-bad5-cdb2f576fc40",
       "name": "Post suggestions?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -1369,7 +1404,7 @@
           },
           "conditions": [
             {
-              "id": "ced5e312-f163-4dbf-ab15-f8f146ecf283",
+              "id": "608d5847-d931-4f30-800c-1e3408952bc4",
               "leftValue": "={{ $json.count > 0 }}",
               "rightValue": true,
               "operator": {
@@ -1385,7 +1420,7 @@
       }
     },
     {
-      "id": "e4f5d51a-ac7f-4c25-affc-25b69b8b8f0b",
+      "id": "f604a93f-b05d-4f1f-be5b-df87390c7200",
       "name": "Post suggestions",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -1663,6 +1698,17 @@
       ]
     },
     "Upsert accounts": {
+      "main": [
+        [
+          {
+            "node": "Create clients for new accounts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create clients for new accounts": {
       "main": [
         [
           {
