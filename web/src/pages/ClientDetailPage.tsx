@@ -13,7 +13,7 @@ import DataTable from "../components/DataTable";
 import DateRangePicker from "../components/DateRangePicker";
 import ClientForm from "../components/ClientForm";
 import MessageThread from "../components/MessageThread";
-import { Button, ConfirmDialog, ErrorNote, Loading, Notice, Pill, Section, StatCard, StatusPill, linkButtonClass } from "../components/ui";
+import { Button, ConfirmDialog, ErrorNote, Notice, PageSkeleton, Pill, Section, StatCard, StatusPill, linkButtonClass } from "../components/ui";
 
 type TrackingFlag = { customer_id: string; name: string; last_conversion_date: string | null; flag_no_recent_conversions: boolean; flag_call_duration_not_90s: boolean; phone_call_duration_seconds: number | null };
 
@@ -72,7 +72,7 @@ export default function ClientDetailPage() {
       </main>
     );
   }
-  if (loading && !data) return <main className="min-h-screen bg-page px-6 py-10"><Loading /></main>;
+  if (loading && !data) return <PageSkeleton cards />;
   if (!data) return null;
 
   const { client } = data;
@@ -127,7 +127,10 @@ export default function ClientDetailPage() {
           <StatCard label="Conv. value" value={moneyMicros(sum("conversions_value") * 1e6, currency)} />
         </div>
 
-        <Section title="Campaigns">
+        <Section
+          title="Campaigns"
+          actions={agency ? <Link to={`/dashboard/clients/${clientId}/builder`} className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink hover:bg-accent-hover">+ Add Campaign</Link> : undefined}
+        >
           <DataTable
             rows={campaigns}
             rowKey={(c) => c.id}

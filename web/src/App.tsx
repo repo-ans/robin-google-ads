@@ -2,7 +2,7 @@ import { lazy, Suspense } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "./lib/auth";
 import ProtectedRoute from "./components/ProtectedRoute";
-import { TestBadge } from "./components/ui";
+import { PageSkeleton, TestBadge } from "./components/ui";
 import LoginPage from "./pages/LoginPage";
 import HomeRedirect from "./pages/HomeRedirect";
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
@@ -30,7 +30,7 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Suspense fallback={<div className="p-10 text-ink-subtle">Loading...</div>}>
+        <Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/" element={guard(<HomeRedirect />)} />

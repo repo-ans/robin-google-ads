@@ -11,7 +11,7 @@ import AppHeader from "../components/AppHeader";
 import DateRangePicker from "../components/DateRangePicker";
 import CampaignChat from "../components/CampaignChat";
 import MessageThread from "../components/MessageThread";
-import { ErrorNote, Loading, StatCard, StatusPill, Tabs } from "../components/ui";
+import { ErrorNote, PageSkeleton, StatCard, StatusPill, Tabs } from "../components/ui";
 import PerformanceTab from "../components/campaign/PerformanceTab";
 import KeywordsTab from "../components/campaign/KeywordsTab";
 import SearchTermsTab from "../components/campaign/SearchTermsTab";
@@ -96,7 +96,7 @@ export default function CampaignDetailPage() {
       </main>
     );
   }
-  if (loading && !data) return <main className="min-h-screen bg-page px-6 py-10"><Loading /></main>;
+  if (loading && !data) return <PageSkeleton cards />;
   if (!data) return null;
 
   const { campaign: c, currency, daily } = data;

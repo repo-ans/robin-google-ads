@@ -4,7 +4,7 @@ import { callN8n, N8nError } from "../lib/n8n";
 import { actions } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import StaffLogins from "../components/StaffLogins";
-import { Button, Section } from "../components/ui";
+import { Button, Section, SkeletonLines, SkeletonTable } from "../components/ui";
 import AppHeader, { outlineButton } from "../components/AppHeader";
 import ErrorBox from "../components/ErrorBox";
 
@@ -146,7 +146,7 @@ export default function SystemPage() {
             changes anything in Google Ads.
           </p>
           {runsError && <ErrorBox message={runsError} />}
-          {runs === null && !runsError && <p className="mt-4 text-ink-subtle">Loading...</p>}
+          {runs === null && !runsError && <div className="mt-4"><SkeletonTable rows={4} /></div>}
           {runs?.length === 0 && <p className="mt-4 text-ink-subtle">No sync has run yet.</p>}
           {runs && runs.length > 0 && (
             <div className="card mt-4 overflow-x-auto rounded-xl border border-line bg-surface">
@@ -181,7 +181,7 @@ export default function SystemPage() {
                         ]}
                         detail={
                           runAccounts === null ? (
-                            <p className="text-ink-subtle">Loading...</p>
+                            <SkeletonLines lines={2} />
                           ) : runAccounts.length === 0 ? (
                             <p className="text-ink-subtle">No accounts in this run.</p>
                           ) : (

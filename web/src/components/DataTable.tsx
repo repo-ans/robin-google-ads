@@ -15,8 +15,11 @@ export type Column<T> = {
   noPrint?: boolean;
 };
 
-// Sortable, filterable table with CSV export. Scrolls sideways on phones,
-// prints in full. Filtering is a plain "contains" over the text columns.
+const PAGE_SIZES = [10, 25, 50, 100];
+
+// Sortable, filterable, paginated table with CSV export (the CSV has every
+// filtered row, not just the page). Scrolls sideways on phones; printing shows
+// the current page. Filtering is a plain "contains" over the text columns.
 export default function DataTable<T>({
   rows,
   columns,
@@ -27,7 +30,7 @@ export default function DataTable<T>({
   toolbar,
   empty = "Nothing here yet.",
   rowClassName,
-  pageSize = 100,
+  pageSize = 25,
 }: {
   rows: T[];
   columns: Column<T>[];
@@ -42,7 +45,8 @@ export default function DataTable<T>({
 }) {
   const [sort, setSort] = useState(initialSort ?? null);
   const [query, setQuery] = useState("");
-  const [limit, setLimit] = useState(pageSize);
+  const [size, setSize] = useState(pageSize);
+  const [page, setPage] = useState(0);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -74,9 +78,15 @@ export default function DataTable<T>({
 
   function toggleSort(key: string) {
     setSort((s) => (s && s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "desc" }));
+    setPage(0);
   }
 
-  const shown = filtered.slice(0, limit);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / size));
+  // Clamp instead of resetting in an effect: new data or a narrower filter can
+  // leave the old page number past the end.
+  const current = Math.min(page, pageCount - 1);
+  const start = current * size;
+  const shown = filtered.slice(start, start + size);
 
   return (
     <div>
@@ -84,7 +94,10 @@ export default function DataTable<T>({
         {rows.length > 5 && (
           <input
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setPage(0);
+            }}
             placeholder={searchPlaceholder}
             aria-label="Filter rows"
             className="w-full rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-sm text-ink focus:border-accent focus:outline-none sm:w-64"
@@ -150,13 +163,78 @@ export default function DataTable<T>({
           </table>
         </div>
       )}
-      {filtered.length > limit && (
-        <div className="no-print mt-3 text-center">
-          <button onClick={() => setLimit((l) => l + pageSize)} className="text-sm font-semibold text-ink-muted hover:text-ink">
-            Show {Math.min(pageSize, filtered.length - limit)} more
-          </button>
-        </div>
+      {filtered.length > PAGE_SIZES[0] && (
+        <Pagination
+          page={current}
+          pageCount={pageCount}
+          size={size}
+          from={filtered.length ? start + 1 : 0}
+          to={start + shown.length}
+          total={filtered.length}
+          onPage={setPage}
+          onSize={(n) => {
+            setSize(n);
+            setPage(0);
+          }}
+        />
       )}
     </div>
+  );
+}
+
+// Page numbers to show: first, last, and two either side of the current page.
+function pageList(page: number, count: number): (number | "gap")[] {
+  const keep = new Set([0, count - 1]);
+  for (let i = page - 2; i <= page + 2; i++) if (i >= 0 && i < count) keep.add(i);
+  const sorted = [...keep].sort((a, b) => a - b);
+  const out: (number | "gap")[] = [];
+  sorted.forEach((n, i) => {
+    if (i > 0 && n - sorted[i - 1] > 1) out.push("gap");
+    out.push(n);
+  });
+  return out;
+}
+
+function Pagination({
+  page, pageCount, size, from, to, total, onPage, onSize,
+}: {
+  page: number; pageCount: number; size: number; from: number; to: number; total: number;
+  onPage: (p: number) => void; onSize: (n: number) => void;
+}) {
+  const btn = "min-w-8 rounded-lg border border-line-strong px-2.5 py-1 text-xs font-semibold text-ink hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-40";
+  return (
+    <nav className="no-print mt-3 flex flex-wrap items-center gap-3 text-xs text-ink-muted" aria-label="Table pages">
+      <span>Showing {from}-{to} of {total}</span>
+      <label className="flex items-center gap-1.5">
+        Rows per page
+        <select
+          value={size}
+          onChange={(e) => onSize(Number(e.target.value))}
+          className="rounded-lg border border-line-strong bg-surface px-2 py-1 text-xs text-ink"
+        >
+          {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
+      </label>
+      {pageCount > 1 && (
+        <div className="flex flex-wrap items-center gap-1 sm:ml-auto">
+          <button className={btn} onClick={() => onPage(page - 1)} disabled={page === 0}>Prev</button>
+          {pageList(page, pageCount).map((p, i) =>
+            p === "gap" ? (
+              <span key={`gap-${i}`} className="px-1">...</span>
+            ) : (
+              <button
+                key={p}
+                onClick={() => onPage(p)}
+                aria-current={p === page ? "page" : undefined}
+                className={p === page ? "min-w-8 rounded-lg bg-accent px-2.5 py-1 text-xs font-semibold text-accent-ink" : btn}
+              >
+                {p + 1}
+              </button>
+            ),
+          )}
+          <button className={btn} onClick={() => onPage(page + 1)} disabled={page >= pageCount - 1}>Next</button>
+        </div>
+      )}
+    </nav>
   );
 }

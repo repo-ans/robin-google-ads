@@ -4,7 +4,7 @@ import { actions, type ChatMessage, type ProposedAction } from "../lib/api";
 import { N8nError } from "../lib/n8n";
 import { useAuth } from "../lib/auth";
 import { money } from "../lib/format";
-import { Button, ConfirmDialog, ErrorNote } from "./ui";
+import { Button, ConfirmDialog, ErrorNote, SkeletonLines } from "./ui";
 
 function describe(a: ProposedAction, currency: string | null) {
   if (a.action_type === "update_daily_budget") return `Set daily budget to ${money(a.daily_budget, currency)}`;
@@ -88,7 +88,7 @@ export default function CampaignChat({
       </div>
 
       <div className="max-h-[28rem] space-y-3 overflow-y-auto p-4">
-        {messages === null && <p className="text-sm text-ink-subtle">Loading...</p>}
+        {messages === null && <SkeletonLines lines={4} />}
         {messages?.length === 0 && <p className="text-sm text-ink-subtle">No messages yet. Ask something below.</p>}
         {messages?.map((m) => (
           <div key={m.id} className={`group flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>

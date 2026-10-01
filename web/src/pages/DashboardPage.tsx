@@ -5,12 +5,12 @@ import { actions, rpc, type AdAccount, type Client, type ClientTotals } from "..
 import { N8nError } from "../lib/n8n";
 import { useDateRange } from "../lib/dateRange";
 import { useAsync } from "../lib/useAsync";
-import { costPerConvMicros, dec, int, moneyMicros } from "../lib/format";
+import { costPerConvMicros, customerId, dec, int, moneyMicros } from "../lib/format";
 import AppHeader from "../components/AppHeader";
 import DataTable from "../components/DataTable";
 import DateRangePicker from "../components/DateRangePicker";
 import ClientForm from "../components/ClientForm";
-import { Button, ConfirmDialog, ErrorNote, Loading, Notice, StatCard } from "../components/ui";
+import { Button, ConfirmDialog, ErrorNote, Loading, Notice } from "../components/ui";
 
 type Row = Client & { t: ClientTotals | undefined };
 
@@ -27,12 +27,12 @@ export default function DashboardPage() {
   const { data, error, loading, reload } = useAsync(async () => {
     const [clients, accounts, totals] = await Promise.all([
       supabase.from("clients").select("*").order("name"),
-      supabase.from("ad_accounts").select("customer_id, client_id, is_manager").eq("is_manager", false),
+      supabase.from("ad_accounts").select("customer_id, client_id, status, is_manager").eq("is_manager", false),
       rpc<ClientTotals>("dash_client_totals", { p_from: range.from, p_to: range.to }),
     ]);
     if (clients.error) throw new Error(clients.error.message);
     if (accounts.error) throw new Error(accounts.error.message);
-    return { clients: clients.data as Client[], accounts: accounts.data as Pick<AdAccount, "customer_id" | "client_id">[], totals };
+    return { clients: clients.data as Client[], accounts: accounts.data as Pick<AdAccount, "customer_id" | "client_id" | "status">[], totals };
   }, [range.from, range.to]);
 
   const rows: Row[] = useMemo(() => {
@@ -42,11 +42,7 @@ export default function DashboardPage() {
   }, [data, showArchived]);
 
   const unassigned = data?.accounts.filter((a) => !a.client_id).length ?? 0;
-  const currencies = new Set(rows.map((r) => r.t?.currency_code).filter(Boolean));
-  const currency = currencies.size === 1 ? [...currencies][0]! : null;
-  const sum = (k: keyof ClientTotals) => rows.reduce((s, r) => s + Number(r.t?.[k] ?? 0), 0);
-  const cost = sum("cost_micros");
-  const conversions = sum("conversions");
+  const accountsOf = (clientId: string) => (data?.accounts ?? []).filter((a) => a.client_id === clientId);
 
   async function syncNow() {
     setBusy(true);
@@ -85,7 +81,7 @@ export default function DashboardPage() {
         )}
 
         <div className="mt-6 flex flex-wrap items-start justify-between gap-4">
-          <Link to="/dashboard/accounts" className="no-print text-sm font-semibold text-ink-muted hover:text-ink">All Google Ads accounts</Link>
+          <Link to="/dashboard/accounts" className="no-print text-sm font-semibold text-ink-muted hover:text-ink">Manage Google Ads accounts</Link>
           <DateRangePicker range={range} />
         </div>
 
@@ -94,16 +90,7 @@ export default function DashboardPage() {
 
         {data && (
           <>
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-              <StatCard label="Cost" value={currency ? moneyMicros(cost, currency) : currencies.size ? "Mixed currencies" : moneyMicros(0)} />
-              <StatCard label="Clicks" value={int(sum("clicks"))} />
-              <StatCard label="Conversions" value={dec(conversions, 1)} />
-              <StatCard label="Cost / conv." value={currency ? moneyMicros(costPerConvMicros(cost, conversions), currency) : "-"} />
-              <StatCard label="Calls 90s+" value={int(sum("calls_90s"))} />
-              <StatCard label="Conv. value" value={currency ? moneyMicros(sum("conversions_value") * 1e6, currency) : "-"} />
-            </div>
-
-            <div className="mt-8">
+            <div className="mt-6">
               <DataTable
                 rows={rows}
                 rowKey={(r) => r.id}
@@ -126,8 +113,13 @@ export default function DashboardPage() {
                       </div>
                     ),
                   },
-                  { key: "accounts", label: "Accounts", align: "right", value: (r) => r.t?.accounts ?? 0 },
                   { key: "campaigns", label: "Campaigns", align: "right", value: (r) => r.t?.campaigns ?? 0 },
+                  {
+                    key: "customer", label: "Customer ID",
+                    value: (r) => accountsOf(r.id).map((a) => customerId(a.customer_id)).join(", "),
+                    render: (r) => <span className="text-ink-subtle">{accountsOf(r.id).map((a) => customerId(a.customer_id)).join(", ") || "-"}</span>,
+                  },
+                  { key: "status", label: "Status", value: (r) => accountsOf(r.id)[0]?.status ?? "", render: (r) => <span className="text-ink-subtle">{(accountsOf(r.id)[0]?.status ?? "-").toLowerCase()}</span> },
                   { key: "cost", label: "Cost", align: "right", value: (r) => Number(r.t?.cost_micros ?? 0) / 1e6, render: (r) => moneyMicros(r.t?.cost_micros ?? 0, r.t?.currency_code) },
                   { key: "clicks", label: "Clicks", align: "right", value: (r) => Number(r.t?.clicks ?? 0), render: (r) => int(r.t?.clicks ?? 0) },
                   { key: "conv", label: "Conv.", align: "right", value: (r) => Number(r.t?.conversions ?? 0), render: (r) => dec(r.t?.conversions ?? 0, 1) },

@@ -3,6 +3,7 @@ import { Navigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import type { AppRole } from "../lib/types";
 import NoAccessPage from "../pages/NoAccessPage";
+import { PageSkeleton } from "./ui";
 
 // Screen-level guard only. The real protection is RLS (reads) and the n8n
 // role check (actions); this just keeps people off pages they cannot use.
@@ -16,7 +17,7 @@ export default function ProtectedRoute({
   const { session, profile, loading } = useAuth();
 
   if (loading) {
-    return <div className="p-10 text-ink-subtle">Loading...</div>;
+    return <PageSkeleton />;
   }
 
   if (!session) {

@@ -80,8 +80,78 @@ export function StatusPill({ status }: { status: string | null | undefined }) {
   return <Pill tone={tone}>{status ? status.toLowerCase().replace(/_/g, " ") : "-"}</Pill>;
 }
 
-export function Loading({ what = "Loading..." }: { what?: string }) {
-  return <p className="py-6 text-sm text-ink-subtle">{what}</p>;
+// Skeleton loaders: grey blocks in the shape of what is coming, instead of "Loading..." text.
+export function Skeleton({ className = "" }: { className?: string }) {
+  return <div className={`animate-pulse rounded-md bg-surface-muted ${className}`} />;
+}
+
+export function SkeletonLines({ lines = 3 }: { lines?: number }) {
+  return (
+    <div className="space-y-3 py-2" aria-hidden>
+      {Array.from({ length: lines }, (_, i) => (
+        <Skeleton key={i} className={`h-4 ${i % 3 === 2 ? "w-1/2" : i % 3 === 1 ? "w-5/6" : "w-full"}`} />
+      ))}
+    </div>
+  );
+}
+
+export function SkeletonTable({ rows = 6, cols = 6 }: { rows?: number; cols?: number }) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-line bg-surface" aria-hidden>
+      <div className="flex gap-4 border-b border-line px-4 py-3">
+        {Array.from({ length: cols }, (_, c) => <Skeleton key={c} className={`h-3 ${c === 0 ? "w-40" : "flex-1"}`} />)}
+      </div>
+      {Array.from({ length: rows }, (_, r) => (
+        <div key={r} className="flex gap-4 border-b border-line px-4 py-4 last:border-0">
+          {Array.from({ length: cols }, (_, c) => <Skeleton key={c} className={`h-4 ${c === 0 ? "w-40" : "flex-1"}`} />)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function SkeletonCards({ count = 6 }: { count?: number }) {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6" aria-hidden>
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className="rounded-xl border border-line bg-surface p-4">
+          <Skeleton className="h-3 w-16" />
+          <Skeleton className="mt-3 h-6 w-24" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// A whole page while it (or its code) loads: title, cards, table.
+export function PageSkeleton({ cards = false }: { cards?: boolean }) {
+  return (
+    <main className="min-h-screen bg-page px-4 py-8 sm:px-6 sm:py-10" role="status" aria-label="Loading">
+      <div className="mx-auto max-w-7xl">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <Skeleton className="h-7 w-56" />
+            <Skeleton className="mt-3 h-4 w-80 max-w-full" />
+          </div>
+          <div className="flex gap-2">
+            <Skeleton className="h-9 w-24" />
+            <Skeleton className="h-9 w-28" />
+          </div>
+        </div>
+        <div className="mt-8 flex justify-end"><Skeleton className="h-9 w-72 max-w-full" /></div>
+        {cards && <div className="mt-6"><SkeletonCards /></div>}
+        <div className="mt-6"><SkeletonTable /></div>
+      </div>
+    </main>
+  );
+}
+
+export function Loading({ what = "Loading", rows }: { what?: string; rows?: number }) {
+  return (
+    <div className="py-4" role="status" aria-label={what}>
+      <SkeletonTable rows={rows} />
+    </div>
+  );
 }
 
 export function Empty({ children }: { children: ReactNode }) {

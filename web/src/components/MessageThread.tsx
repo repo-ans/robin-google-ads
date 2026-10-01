@@ -5,7 +5,7 @@ import { N8nError } from "../lib/n8n";
 import { useAuth } from "../lib/auth";
 import { isAgency } from "../lib/types";
 import { dateTime, money } from "../lib/format";
-import { Button, ErrorNote } from "./ui";
+import { Button, ErrorNote, SkeletonLines } from "./ui";
 
 // Client Suggestions (reference MessageThread + client portal, now behind a
 // real login). Clients post; FF sees the AI draft, edits it and sends it.
@@ -73,7 +73,7 @@ export default function MessageThread({
   return (
     <div className="card rounded-xl border border-line bg-surface">
       <div className="space-y-4 p-4">
-        {messages === null && <p className="text-sm text-ink-subtle">Loading...</p>}
+        {messages === null && <SkeletonLines lines={4} />}
         {messages?.length === 0 && (
           <p className="text-sm text-ink-subtle">No suggestions yet. {agency ? "Clients can send ideas or requests here." : "Send us an idea or a request below."}</p>
         )}
