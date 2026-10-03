@@ -2,7 +2,7 @@
   "name": "ff-dataforseo",
   "nodes": [
     {
-      "id": "a1047863-384d-4e0b-8e71-c33db40f6b75",
+      "id": "d456ba4e-3e4b-4a1b-9bd4-f84fdbcd29a0",
       "name": "Schedule: weekly Monday 05:00",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
@@ -25,7 +25,7 @@
       }
     },
     {
-      "id": "ce03ad7a-c579-480e-a405-00ea17a37d36",
+      "id": "0eac200b-b400-4866-beca-094170595028",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -45,7 +45,7 @@
       "notes": "Refresh keyword data from the dashboard. Answers 202 at once; the research carries on."
     },
     {
-      "id": "b6656749-5141-44a4-8b76-79e69c3687a2",
+      "id": "19861ef3-11dd-49ba-a739-d2cc3af852a4",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -59,7 +59,7 @@
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
     },
     {
-      "id": "f452b5e1-c81d-46e4-9f85-826b3723928c",
+      "id": "e5ef3193-9f2f-4120-b59e-9c76d57172ec",
       "name": "Manual run?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -76,7 +76,7 @@
           },
           "conditions": [
             {
-              "id": "0f1b53f9-6061-439d-b5ca-765f5c63e9dc",
+              "id": "0cfbbfaa-71e1-4e92-81af-385d18338bff",
               "leftValue": "={{ $('Config').first().json.trigger === 'manual' }}",
               "rightValue": true,
               "operator": {
@@ -92,7 +92,7 @@
       }
     },
     {
-      "id": "ac064fca-7261-427d-a9b1-576187575cfa",
+      "id": "1e000c4c-48bb-4414-9bc1-36e3ffd1db84",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -106,7 +106,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "fa7131d4-a51c-49c7-a24c-08d0065b87d7",
+      "id": "c7d2ae86-b4ad-42d6-89cc-5ba6e1116d08",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -142,7 +142,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "9013d7f4-35a7-4376-bcd0-4bfc990dd207",
+      "id": "046835d2-ebf1-45c1-9d1b-d207bc177042",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -187,7 +187,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "1122083d-1b96-488e-a5b1-a2fafad468e8",
+      "id": "c8a8da67-c197-4ef4-88d4-10af8cf9bbe7",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -201,7 +201,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "34c923fa-6e36-4bf8-a363-2b1a8f4e331d",
+      "id": "28957be1-ddd0-43d8-95fe-06f7897f23e5",
       "parameters": {
         "conditions": {
           "options": {
@@ -234,7 +234,7 @@
       ]
     },
     {
-      "id": "0f9aebd3-467a-43ad-83fc-c3020cf630a6",
+      "id": "00d61414-42bc-4262-ac4c-c4a551274258",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -252,7 +252,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "7489c8f8-b7e2-462b-a163-fd4e8ac06a29",
+      "id": "206d2906-b080-4dc8-8dd7-bbf94a83e6d4",
       "name": "Respond: accepted",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -269,7 +269,7 @@
       }
     },
     {
-      "id": "238d99d5-c4bd-431c-87d0-5c3beac7e244",
+      "id": "b8f13144-b6f5-473d-9a3e-587e99770d13",
       "name": "Get Google Ads secrets",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -297,7 +297,7 @@
       "notes": "Developer token, OAuth client id/secret, refresh token and MCC id, entered by Rob on the dashboard Settings page (stored in Supabase private.google_ads_secrets - never readable by the browser)."
     },
     {
-      "id": "a61f9c20-7c38-4692-89cf-4a95aed634e0",
+      "id": "c3c6ef4d-add2-4be5-bdec-d72eb5f19394",
       "name": "Get research targets",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -324,7 +324,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "9ec8dcb0-2569-4205-96d9-21af4704d79b",
+      "id": "d5086b7e-1ea6-4775-940a-10aa9a843bb2",
       "name": "Prepare targets",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -337,7 +337,7 @@
       }
     },
     {
-      "id": "9655765c-a2a0-4484-9fab-4ab5e8f4f9de",
+      "id": "8da250dc-9197-4cc0-aa68-f3cc947ba308",
       "name": "Anything to research?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -354,7 +354,7 @@
           },
           "conditions": [
             {
-              "id": "14b05889-764c-476c-a9b0-9133ba42800b",
+              "id": "6d9693c7-2ddf-45a9-9d90-4b29f70ccb33",
               "leftValue": "={{ !$json.none }}",
               "rightValue": true,
               "operator": {
@@ -370,7 +370,7 @@
       }
     },
     {
-      "id": "6c5b2a6b-67b9-4ab8-96cd-45f89e6901f3",
+      "id": "6a6367b5-cf80-493b-a122-5ce2fc8ac05c",
       "name": "Loop over clients",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
@@ -384,7 +384,7 @@
       }
     },
     {
-      "id": "e3e18781-bb82-4476-9b1a-099d3510d990",
+      "id": "a1d95135-6599-478d-b9f9-893a6412fbe4",
       "name": "Refresh Google token",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -428,7 +428,7 @@
       "notes": "OAuth refresh, same as the reference. Values from 'Get Google Ads secrets'. Test: Execute step - the output must contain access_token."
     },
     {
-      "id": "f55758b7-4171-4981-90b4-ed2cd7e1f071",
+      "id": "4fd5809a-2b5b-4cca-b4c2-0ebda1f9387f",
       "name": "Build requests",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -441,7 +441,7 @@
       }
     },
     {
-      "id": "d26f0c9f-51f2-413e-9035-884161eb9f43",
+      "id": "35f82387-7895-4cdd-baeb-7d17ea199717",
       "name": "DataForSEO search volume",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -476,7 +476,7 @@
       "notes": "Volume, CPC and competition for up to 1000 of our keywords, negatives and search terms."
     },
     {
-      "id": "4dd099f6-3eaa-4819-a056-e42a3e185779",
+      "id": "f15a5cb2-01a7-4574-973b-a7a8312cb7bc",
       "name": "Google keyword metrics",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -506,7 +506,7 @@
       "notes": "Google Keyword Planner historical metrics. Read only (not a mutate)."
     },
     {
-      "id": "730c6773-af52-4d6a-b0f2-cbc3b1546bc7",
+      "id": "4695ac60-edb6-4a76-bd5a-5858c997e68d",
       "name": "Related seeds",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -519,7 +519,7 @@
       }
     },
     {
-      "id": "90ef2199-d7be-4234-b93a-2f647e4097cd",
+      "id": "9e69fe48-eff9-44d6-9beb-d5a16773cafc",
       "name": "DataForSEO related keywords",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -559,7 +559,7 @@
       }
     },
     {
-      "id": "63881a4d-f9ce-4c80-a0a8-56498a20b943",
+      "id": "d82c542b-1b15-4603-97ce-612d019a1012",
       "name": "Map results",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -572,7 +572,7 @@
       }
     },
     {
-      "id": "190047cd-f330-4d15-a339-84979af70d39",
+      "id": "226bc22e-09b5-485f-81b8-0e5f92060545",
       "name": "Upsert keyword data",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -614,7 +614,7 @@
       }
     },
     {
-      "id": "9c9b0975-35d8-4c6b-9bed-8c9510fdc362",
+      "id": "7497be9b-a562-4c97-8d2d-771c59da1ff7",
       "name": "Done",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,

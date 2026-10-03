@@ -26,6 +26,7 @@ export default function ClientForm({ client, onClose, onSaved }: { client?: Clie
     own_brand_terms: listText(client?.own_brand_terms),
     slack_channel: client?.slack_channel ?? "",
     ghl_location_id: client?.ghl_location_id ?? "",
+    google_sheet_id: client?.google_sheet_id ?? "",
     dataforseo_location_code: String(client?.dataforseo_location_code ?? 2840),
     language_code: client?.language_code ?? "en",
     days: client?.office_hours?.days ?? DAYS.slice(0, 5),
@@ -33,6 +34,26 @@ export default function ClientForm({ client, onClose, onSaved }: { client?: Clie
     end_hour: String(client?.office_hours?.end_hour ?? 17),
   });
   const [error, setError] = useState<string | null>(null);
+  const [ghl, setGhl] = useState<{ id: string; name: string; town: string | null }[] | null>(null);
+  const [ghlBusy, setGhlBusy] = useState(false);
+  const [ghlError, setGhlError] = useState<string | null>(null);
+
+  // FF's GHL sub-accounts (agency key, via n8n). Preselects the one whose name matches the client.
+  async function loadGhl() {
+    setGhlBusy(true);
+    setGhlError(null);
+    try {
+      const r = await actions.ghlLocations();
+      setGhl(r.locations);
+      const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const match = r.locations.find((l) => norm(l.name) === norm(f.name)) ?? r.locations.find((l) => f.name && norm(l.name).includes(norm(f.name)));
+      if (!f.ghl_location_id && match) setF((x) => ({ ...x, ghl_location_id: match.id }));
+    } catch (err) {
+      setGhlError(err instanceof N8nError ? err.message : "Could not load the GHL sub-accounts.");
+    } finally {
+      setGhlBusy(false);
+    }
+  }
   const [saving, setSaving] = useState(false);
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value }));
 
@@ -55,6 +76,7 @@ export default function ClientForm({ client, onClose, onSaved }: { client?: Clie
       own_brand_terms: toList(f.own_brand_terms),
       slack_channel: f.slack_channel,
       ghl_location_id: f.ghl_location_id,
+      google_sheet_id: f.google_sheet_id,
       dataforseo_location_code: Number(f.dataforseo_location_code),
       language_code: f.language_code,
       office_hours: { days: f.days, start_hour: Number(f.start_hour), end_hour: Number(f.end_hour) },
@@ -138,7 +160,24 @@ export default function ClientForm({ client, onClose, onSaved }: { client?: Clie
           </select>
         </Field>
         <Field label="Slack channel (optional)"><input className={inputClass} value={f.slack_channel} onChange={set("slack_channel")} placeholder="#client-name" /></Field>
-        <Field label="GHL location ID (optional)"><input className={inputClass} value={f.ghl_location_id} onChange={set("ghl_location_id")} /></Field>
+        <Field label="GHL sub-account (optional)" hint="Used for the preplanning form fields and the weekly lead count. Pick it from GHL, or paste the location ID.">
+          {ghl ? (
+            <select className={inputClass} value={f.ghl_location_id} onChange={set("ghl_location_id")}>
+              <option value="">No GHL sub-account</option>
+              {f.ghl_location_id && !ghl.some((l) => l.id === f.ghl_location_id) && <option value={f.ghl_location_id}>{f.ghl_location_id} (not found in GHL)</option>}
+              {ghl.map((l) => <option key={l.id} value={l.id}>{l.name}{l.town ? ` - ${l.town}` : ""}</option>)}
+            </select>
+          ) : (
+            <div className="flex gap-2">
+              <input className={inputClass} value={f.ghl_location_id} onChange={set("ghl_location_id")} placeholder="Location ID" />
+              <Button onClick={loadGhl} disabled={ghlBusy}>{ghlBusy ? "Loading..." : "Pick from GHL"}</Button>
+            </div>
+          )}
+          {ghlError && <p className="mt-1 text-xs text-danger">{ghlError}</p>}
+        </Field>
+        <Field label="Google Sheet (optional)" hint="Paste the Sheet link. The weekly report adds one row per week to its Weekly tab.">
+          <input className={inputClass} value={f.google_sheet_id} onChange={set("google_sheet_id")} placeholder="https://docs.google.com/spreadsheets/d/..." />
+        </Field>
         {error && <div className="sm:col-span-2"><ErrorNote message={error} /></div>}
         <div className="flex justify-end gap-2 sm:col-span-2">
           <Button onClick={onClose}>Cancel</Button>

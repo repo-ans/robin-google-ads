@@ -1,0 +1,37 @@
+// Monday Slack note to Rob: per client the three key numbers, tracking, what
+// changed and what he needs to decide. Calm tone, plain hyphens, no emoji,
+// no search terms and no personal data (weekly_stats holds counts only).
+const cfg = $('Config').first().json;
+const rows = $input.all().map((i) => i.json).filter((r) => r && r.client_id);
+
+if (!cfg.send_slack || !cfg.SLACK_CHANNEL) {
+  return [{ json: { skip: true, reason: cfg.SLACK_CHANNEL ? 'not requested' : 'no SLACK_CHANNEL' } }];
+}
+
+const num = (v) => Number(v) || 0;
+const money = (micros, cur) => `${(num(micros) / 1e6).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ${cur || ''}`.trim();
+const count = (v) => String(Math.round(num(v) * 10) / 10);
+const fmtDay = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+
+const shown = rows
+  .filter((r) => num(r.cost_micros) > 0 || (r.flags || []).length || (r.decisions || []).length)
+  .sort((a, b) => num(b.cost_micros) - num(a.cost_micros));
+
+const lines = [`FF Google Ads weekly report - ${fmtDay(cfg.week_start)} to ${fmtDay(cfg.week_end)}`];
+if (!shown.length) lines.push('', 'No spend and nothing to look at this week.');
+
+for (const r of shown.slice(0, 20)) {
+  const c = r.clients || {};
+  const numbers = c.process === 'online_cremation'
+    ? `${count(r.arrangements)} paid arrangement(s) (${money(num(r.arrangements_value) * 1e6, r.currency_code)}), ${count(r.arrangements_started)} started`
+    : `${count(r.calls_90s)} call(s) 90s+, ${count(r.forms)} form(s)`;
+  lines.push('', `${c.name || 'Client'}: spent ${money(r.cost_micros, r.currency_code)}, ${numbers}. Tracking ${r.tracking_ok ? 'OK' : 'needs a look'}.`);
+  for (const x of (r.changes || []).slice(0, 3)) lines.push(`- ${x}`);
+  for (const x of (r.flags || []).slice(0, 4)) lines.push(`- Check: ${x}`);
+  for (const x of r.decisions || []) lines.push(`- For you: ${x}`);
+}
+if (shown.length > 20) lines.push('', `And ${shown.length - 20} more client(s) on the dashboard.`);
+if (cfg.DASHBOARD_URL) lines.push('', `Dashboard: ${cfg.DASHBOARD_URL}`);
+
+const text = lines.join('\n').replace(/[–—]/g, '-');
+return [{ json: { skip: false, text } }];

@@ -1,7 +1,7 @@
 // @include shared/input.js
 // Everything FF staff do to clients, accounts and logins. Body { action, ... }:
 //   create_client      { name, contact_name?, contact_email?, google_ads_customer_id?, slug?, website_url?, phone?, towns?, process?, currency_code?, case_value?,
-//                        competitor_terms?, own_brand_terms?, slack_channel?, ghl_location_id?,
+//                        competitor_terms?, own_brand_terms?, slack_channel?, ghl_location_id?, google_sheet_id?,
 //                        dataforseo_location_code?, language_code?, office_hours? }
 //   update_client      { client_id, ...same fields }
 //   archive_client / unarchive_client { client_id }
@@ -59,7 +59,19 @@ function clientFields(src) {
     if (src.case_value !== null && src.case_value !== '' && !(n >= 0)) errors.push('Case value must be a number.');
     f.case_value_micros = src.case_value === null || src.case_value === '' ? null : Math.round(n * 1e6);
   }
-  if ('ghl_location_id' in src) f.ghl_location_id = text(src.ghl_location_id, 100) || null;
+  if ('ghl_location_id' in src) {
+    const g = text(src.ghl_location_id, 100);
+    if (g && !/^[A-Za-z0-9_-]+$/.test(g)) errors.push('GHL location ID has letters and numbers only (Settings > Business Profile in GHL).');
+    f.ghl_location_id = g || null;
+  }
+  if ('google_sheet_id' in src) {
+    // The whole Sheet link or just its id (the part after /d/).
+    const raw = text(src.google_sheet_id, 300);
+    const m = raw.match(/\/d\/([A-Za-z0-9_-]{20,100})/);
+    const id = m ? m[1] : raw;
+    if (id && !/^[A-Za-z0-9_-]{20,100}$/.test(id)) errors.push('Google Sheet: paste the Sheet link or its id.');
+    f.google_sheet_id = id || null;
+  }
   if ('competitor_terms' in src) f.competitor_terms = list(src.competitor_terms);
   if ('own_brand_terms' in src) f.own_brand_terms = list(src.own_brand_terms);
   if ('slack_channel' in src) f.slack_channel = text(src.slack_channel, 80) || null;

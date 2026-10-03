@@ -23,6 +23,7 @@ export type Client = {
   case_value_micros: number | null;
   currency_code: string | null;
   ghl_location_id: string | null;
+  google_sheet_id: string | null;
   competitor_terms: string[];
   own_brand_terms: string[];
   slack_channel: string | null;
@@ -280,6 +281,31 @@ export type ChangeEvent = {
   changed_fields: string[];
 };
 
+// One client's week (ff-weekly-report). Counts only.
+export type WeeklyStat = {
+  client_id: string;
+  week_start: string;
+  week_end: string;
+  currency_code: string | null;
+  cost_micros: number;
+  clicks: number;
+  conversions: number;
+  cost_per_conversion_micros: number | null;
+  calls_90s: number;
+  forms: number;
+  arrangements: number;
+  arrangements_value: number;
+  arrangements_started: number;
+  ghl_google_leads: number | null;
+  signed_cases: number | null;
+  tracking_ok: boolean;
+  flags: string[];
+  changes: string[];
+  decisions: string[];
+  sheet_written_at: string | null;
+  synced_at: string;
+};
+
 export type ProposedAction = {
   action_type: "update_daily_budget" | "pause_campaign" | "resume_campaign";
   daily_budget: number | null;
@@ -367,6 +393,12 @@ type Ok<T = unknown> = { ok: true; message?: string; data?: T };
 export const actions = {
   syncNow: (customer_id?: string) => callN8n("ff/sync-now", customer_id ? { customer_id } : {}),
   keywordResearch: (client_id?: string) => callN8n("ff/keyword-research", client_id ? { client_id } : {}),
+  weeklyReport: (body: { client_id?: string; week_start?: string; slack?: boolean }) =>
+    callN8n<{ status: string; message?: string }>("ff/weekly-report", body),
+  ghlSetup: (action: "check" | "setup", client_id: string) =>
+    callN8n<{ ok: boolean; message: string }>("ff/ghl-setup", { action, client_id }),
+  ghlLocations: () =>
+    callN8n<{ ok: true; locations: { id: string; name: string; town: string | null }[] }>("ff/ghl-setup", { action: "list_locations" }),
 
   chat: (body: { campaign_row_id: string; action: "send" | "reset" | "delete_message" | "dismiss_action"; message?: string; message_id?: string }) =>
     callN8n<{ message?: ChatMessage; ok?: boolean }>("ff/campaign-chat", body),

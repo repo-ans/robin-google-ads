@@ -162,6 +162,8 @@ with B's ids gets 403).
 | OpenAI key | n8n credential "FF OpenAI" | FF, in n8n |
 | Slack bot token | n8n credential "FF Slack" | FF, in n8n |
 | DataForSEO login + password | n8n credential "FF DataForSEO" | FF, in n8n |
+| GHL agency-level private integration key (one for all clients; per client it is exchanged for a sub-account token at run time) | n8n credential "FF GHL" (Header Auth) | FF, in n8n (added 2026-10-02, agency key approved by Robin) |
+| Google Sheets login (client Sheets) | n8n credential "FF Google Sheets" (OAuth2) | FF, in n8n (added 2026-10-02) |
 
 How the Google Ads values stay safe:
 - Schema `private` is not exposed by the API; the table has RLS on with no policies and no privileges for
@@ -270,7 +272,12 @@ CTR, average CPC and cost/conv are computed in views from sums, never stored (av
 
 ### 4.7 From the PDF, not in Phases 1-7 (tables added when those tasks start)
 
-`weekly_stats` (Monday snapshot), `case_match_runs` (counts only), and GHL form / Process 2 tracking. See 12.
+Built 2026-10-02 (migration 13): `weekly_stats` (one row per client per week, counts, flags, changes, decisions -
+no personal data), `tracking_health` (weekly snapshot of each conversion action), `clients.google_sheet_id`, and the
+n8n-only `ff_weekly_report()`. Website click id script `web/public/ff-click-id.js` and the GHL / Google Ads setup steps
+in `docs/tracking-setup.md`.
+
+Still to come: `case_match_runs` (counts only) and Process 2 purchase tracking. See 12.
 
 ---
 
@@ -668,6 +675,8 @@ Each reference workflow maps to one FF workflow of the same shape.
 | `ff-apply-campaign-action` | `apply-campaign-action` | `/ff/apply-campaign-action` | rob_admin | write | Inactive until Phase 6 |
 | `ff-delete-campaign` | `delete-campaign` | `/ff/delete-campaign` | rob_admin | write (remove) | Inactive until Phase 6 |
 | `ff-dataforseo` | new | Weekly schedule + `/ff/dataforseo-refresh` | ff_staff, rob_admin | none | Phase 7 |
+| `ff-weekly-report` | new (PDF task 8) | Monday 08:00 + `/ff/weekly-report` - fills `weekly_stats` and `tracking_health` from `ff_weekly_report()`, counts GHL leads tagged "from google ads" (count only), writes one row to the client's Google Sheet, Slack note to Rob (schedule only, or `slack: true`). Keeps no execution data (the GHL answer can hold a contact) | ff_staff, rob_admin | none | Built 2026-10-02 |
+| `ff-ghl-setup` | new (PDF task 3) | `/ff/ghl-setup` - `list_locations` (sub-account picker on Edit client), `check` / `setup`: the FF GHL key reaches the client's location; creates the contact fields gclid, gbraid, wbraid, utm_* and the tag "from google ads" if missing. Nothing else in GHL changes | ff_staff, rob_admin | none | Built 2026-10-02 |
 
 Carried over from the reference notes: explicit response modes; `.first()` for singletons; key-based matching;
 `alwaysOutputData` on empty-able reads; `executeOnce` on table-wide reads; `onError: continueRegularOutput` on the

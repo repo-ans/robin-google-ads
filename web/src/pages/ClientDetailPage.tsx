@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
-import { actions, rpc, type AccountHealth, type AdAccount, type CampaignTotals, type Client } from "../lib/api";
+import { actions, rpc, type AccountHealth, type AdAccount, type CampaignTotals, type Client, type WeeklyStat } from "../lib/api";
 import { N8nError } from "../lib/n8n";
 import { useAuth } from "../lib/auth";
 import { isAgency } from "../lib/types";
 import { useDateRange } from "../lib/dateRange";
 import { useAsync } from "../lib/useAsync";
-import { costPerConvMicros, customerId, dateTime, dec, int, moneyMicros, pct } from "../lib/format";
+import { costPerConvMicros, customerId, date, dateTime, dec, int, moneyMicros, pct } from "../lib/format";
 import AppHeader from "../components/AppHeader";
 import DataTable from "../components/DataTable";
 import DateRangePicker from "../components/DateRangePicker";
@@ -30,13 +30,14 @@ export default function ClientDetailPage() {
   const [busy, setBusy] = useState<string | null>(null);
 
   const { data, error, loading, reload } = useAsync(async () => {
-    const [client, accounts, campaigns, health, flags] = await Promise.all([
+    const [client, accounts, campaigns, health, flags, weeks] = await Promise.all([
       supabase.from("clients").select("*").eq("id", clientId).maybeSingle(),
       supabase.from("ad_accounts").select("*").eq("client_id", clientId).order("customer_id"),
       rpc<CampaignTotals>("dash_campaign_totals", { p_client_id: clientId, p_from: range.from, p_to: range.to }),
       supabase.from("v_account_health").select("*").eq("client_id", clientId),
       supabase.from("v_tracking_health").select("customer_id, name, last_conversion_date, flag_no_recent_conversions, flag_call_duration_not_90s, phone_call_duration_seconds")
         .or("flag_no_recent_conversions.eq.true,flag_call_duration_not_90s.eq.true"),
+      supabase.from("weekly_stats").select("*").eq("client_id", clientId).order("week_start", { ascending: false }).limit(12),
     ]);
     if (client.error) throw new Error(client.error.message);
     if (!client.data) throw new Error("Client not found.");
@@ -47,6 +48,7 @@ export default function ClientDetailPage() {
       campaigns,
       health: (health.data ?? []) as AccountHealth[],
       flags: ((flags.data ?? []) as TrackingFlag[]).filter((f) => accountIds.has(f.customer_id)),
+      weeks: (weeks.data ?? []) as WeeklyStat[],
     };
   }, [clientId, range.from, range.to]);
 
@@ -82,6 +84,8 @@ export default function ClientDetailPage() {
   const cost = sum("cost_micros");
   const conv = sum("conversions");
   const qs = `?range=${range.key}${range.key === "custom" ? `&from=${range.from}&to=${range.to}` : ""}`;
+  const online = client.process === "online_cremation";
+  const latestWeek = data.weeks[0];
   const issues = data.health.filter((h) => h.flag_auto_tagging_off || h.flag_call_reporting_off || h.campaigns_not_presence_only > 0).length + data.flags.length;
 
   return (
@@ -174,7 +178,16 @@ export default function ClientDetailPage() {
           />
         </Section>
 
-        <Section title="Tracking health" hint="From the latest sync. The SOP counts calls of 90 seconds or more and preplanning forms.">
+        <Section
+          title="Tracking health"
+          hint="From the latest sync. The SOP counts calls of 90 seconds or more and preplanning forms."
+          actions={agency ? (
+            <>
+              <Button size="sm" disabled={!!busy || !client.ghl_location_id} onClick={() => act("ghl-check", () => actions.ghlSetup("check", clientId))}>Check GHL</Button>
+              <Button size="sm" disabled={!!busy || !client.ghl_location_id} onClick={() => act("ghl-setup", () => actions.ghlSetup("setup", clientId))}>Set up GHL fields</Button>
+            </>
+          ) : undefined}
+        >
           {issues === 0 ? (
             <p className="text-sm text-success">No tracking problems found.</p>
           ) : (
@@ -195,6 +208,51 @@ export default function ClientDetailPage() {
                 </li>
               ))}
             </ul>
+          )}
+        </Section>
+
+        <Section
+          title="Weekly report"
+          hint="Monday to Sunday, made every Monday morning. The same row goes to the client's Google Sheet, and a short note to Rob on Slack."
+          actions={agency ? (
+            <Button size="sm" disabled={!!busy} onClick={() => act("weekly", () => actions.weeklyReport({ client_id: clientId }), "Weekly report started for last week. Reload in a minute.")}>
+              Run for last week
+            </Button>
+          ) : undefined}
+        >
+          <DataTable
+            rows={data.weeks}
+            rowKey={(w) => w.week_start}
+            csvName={`${client.slug}-weekly`}
+            empty="No weekly report yet. The first one is made next Monday, or with Run for last week."
+            columns={[
+              { key: "week", label: "Week", value: (w) => w.week_start, render: (w) => `${date(w.week_start)} - ${date(w.week_end)}` },
+              { key: "cost", label: "Spend", align: "right", value: (w) => w.cost_micros / 1e6, render: (w) => moneyMicros(w.cost_micros, w.currency_code) },
+              { key: "clicks", label: "Clicks", align: "right", value: (w) => Number(w.clicks), render: (w) => int(w.clicks) },
+              ...(online
+                ? [
+                  { key: "arr", label: "Arrangements", align: "right" as const, value: (w: WeeklyStat) => Number(w.arrangements), render: (w: WeeklyStat) => dec(w.arrangements, 0) },
+                  { key: "arrv", label: "Value", align: "right" as const, value: (w: WeeklyStat) => Number(w.arrangements_value), render: (w: WeeklyStat) => moneyMicros(Number(w.arrangements_value) * 1e6, w.currency_code) },
+                ]
+                : [
+                  { key: "calls", label: "Calls 90s+", align: "right" as const, value: (w: WeeklyStat) => Number(w.calls_90s), render: (w: WeeklyStat) => dec(w.calls_90s, 0) },
+                  { key: "forms", label: "Forms", align: "right" as const, value: (w: WeeklyStat) => Number(w.forms), render: (w: WeeklyStat) => dec(w.forms, 0) },
+                  { key: "ghl", label: "GHL leads", align: "right" as const, value: (w: WeeklyStat) => w.ghl_google_leads, render: (w: WeeklyStat) => int(w.ghl_google_leads) },
+                ]),
+              { key: "cpa", label: "Cost / conv.", align: "right", value: (w) => (w.cost_per_conversion_micros ?? 0) / 1e6, render: (w) => moneyMicros(w.cost_per_conversion_micros, w.currency_code) },
+              { key: "tracking", label: "Tracking", value: (w) => (w.tracking_ok ? "OK" : "Check"), render: (w) => (w.tracking_ok ? <Pill tone="good">OK</Pill> : <Pill tone="warn">Check</Pill>) },
+              ...(agency ? [{ key: "sheet", label: "Sheet", value: (w: WeeklyStat) => (w.sheet_written_at ? "written" : "-") }] : []),
+            ]}
+          />
+          {latestWeek && (latestWeek.flags.length > 0 || latestWeek.changes.length > 0 || latestWeek.decisions.length > 0) && (
+            <div className="card mt-4 rounded-xl border border-line bg-surface p-4 text-sm">
+              <p className="font-semibold">Week of {date(latestWeek.week_start)}</p>
+              {latestWeek.changes.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-5 text-ink-muted">{latestWeek.changes.map((x) => <li key={x}>{x}</li>)}</ul>}
+              {latestWeek.flags.length > 0 && <div className="mt-3 space-y-2">{latestWeek.flags.map((x) => <Notice key={x}>{x}</Notice>)}</div>}
+              {agency && latestWeek.decisions.length > 0 && (
+                <div className="mt-3"><p className="font-medium">For Rob</p><ul className="mt-1 list-disc space-y-1 pl-5 text-ink-muted">{latestWeek.decisions.map((x) => <li key={x}>{x}</li>)}</ul></div>
+              )}
+            </div>
           )}
         </Section>
 

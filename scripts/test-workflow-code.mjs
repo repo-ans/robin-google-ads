@@ -298,6 +298,21 @@ await test("client admin: create login and disable login plans", async () => {
   assert.equal(self[0].json.status, 403);
 });
 
+await test("client admin: Google Sheet link becomes its id; bad GHL location id is refused", async () => {
+  const sheetId = "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
+  const ok = await run("ff-client-admin/plan.js", {
+    input: [item({})],
+    nodes: ctxNodes({ action: "update_client", client_id: clientA, google_sheet_id: `https://docs.google.com/spreadsheets/d/${sheetId}/edit#gid=0`, ghl_location_id: "AbC123xyz" }, staff),
+  });
+  assert.equal(ok[0].json.valid, true);
+  assert.equal(ok[0].json.body.google_sheet_id, sheetId);
+  assert.equal(ok[0].json.body.ghl_location_id, "AbC123xyz");
+  const bad = await run("ff-client-admin/plan.js", {
+    input: [item({})], nodes: ctxNodes({ action: "update_client", client_id: clientA, ghl_location_id: "../../contacts" }, staff),
+  });
+  assert.equal(bad[0].json.status, 400);
+});
+
 await test("client admin: new client with contact and Google Ads account links the account after the client", async () => {
   const out = await run("ff-client-admin/plan.js", {
     input: [item({})],
@@ -432,6 +447,151 @@ await test("google ads settings: test explains the first problem in plain words"
     nodes: { "Get Google Ads secrets": [item(secrets)], "Refresh Google token": [item({ access_token: "x" })] },
   });
   assert.equal(noMcc[0].json.body.ok, false);
+});
+
+// ------------------------------------------------------------------ weekly report, GHL setup
+const weekRow = {
+  client_id: clientA, client_name: "McCall Gardens", process: "funeral_home", currency_code: "USD",
+  ghl_location_id: "loc123", google_sheet_id: "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789", week_start: "2026-09-21", week_end: "2026-09-27",
+  cost_micros: 400000000, impressions: 5000, clicks: 120, conversions: 15, calls_90s: 12, ad_calls_90s_seen: 14, forms: 3,
+  arrangements: 0, arrangements_value: 0, arrangements_started: 0,
+  prev_cost_micros: 300000000, prev_clicks: 100, prev_calls_90s: 12, prev_forms: 1, prev_arrangements: 0,
+  has_call_action: true, has_form_action: true, has_purchase_action: false,
+  ask_rob_terms: 2, unsorted_terms: 0, last_synced_at: new Date().toISOString(), account_flags: [],
+  tracking: [{ customer_id: "1234567890", conversion_action_id: "70", name: "Calls 90s+", type: "AD_CALL", status: "ENABLED", primary_for_goal: true,
+    phone_call_duration_seconds: 90, last_conversion_date: "2026-09-27", conversions_week: 12, spend_14d_micros: 700000000,
+    flag_no_recent_conversions: false, flag_call_duration_not_90s: false }],
+};
+const weekCfg = { SHEET_TAB: "Weekly", SLACK_CHANNEL: "#ff-ads", send_slack: true, week_start: "2026-09-21", week_end: "2026-09-27", DASHBOARD_URL: "" };
+
+await test("weekly report: config picks last full Monday-to-Sunday week, or a given Monday", async () => {
+  const [auto] = await run("ff-weekly-report/config.js", { input: [item({})] });
+  const ws = new Date(`${auto.json.week_start}T00:00:00Z`);
+  assert.equal(ws.getUTCDay(), 1);
+  assert.equal((Date.parse(`${auto.json.week_end}T00:00:00Z`) - ws.getTime()) / 86400000, 6);
+  assert.equal(auto.json.send_slack, true);
+  const [given] = await run("ff-weekly-report/config.js", { input: [item({ headers: {}, body: { week_start: "2026-09-21", client_id: clientA } })] });
+  assert.equal(given.json.week_start, "2026-09-21");
+  assert.equal(given.json.only_client_id, clientA);
+  assert.equal(given.json.send_slack, false, "a dashboard run does not post to Slack unless asked");
+  const [notMonday] = await run("ff-weekly-report/config.js", { input: [item({ headers: {}, body: { week_start: "2026-09-22" } })] });
+  assert.notEqual(notMonday.json.week_start, "2026-09-22");
+});
+
+await test("weekly report: client row has counts, flags, changes and decisions - no contacts", async () => {
+  const ghl = { statusCode: 200, body: { total: 5, contacts: [{ firstName: "Should", lastName: "NotBeKept" }] } };
+  const [out] = await run("ff-weekly-report/build-client-report.js", {
+    input: [item(ghl)], nodes: { Config: [item(weekCfg)], "Loop over clients": [item(weekRow)], "GHL: location token": [item({ statusCode: 201, body: { access_token: "loc-token" } })] },
+  });
+  const s = out.json.stats;
+  assert.equal(s.ghl_google_leads, 5);
+  assert.equal(s.cost_per_conversion_micros, Math.round(400000000 / 15));
+  assert.ok(s.flags.some((f) => /GHL received 5 Google Ads lead\(s\) but Google Ads counted 3/.test(f)));
+  assert.ok(s.flags.some((f) => /saw 14 ad call/.test(f)));
+  assert.equal(s.tracking_ok, false);
+  assert.ok(s.changes.some((c) => /Spend up 33%/.test(c)));
+  assert.ok(s.changes.some((c) => /Forms up 200%/.test(c)));
+  assert.ok(!s.changes.some((c) => /Calls/.test(c)), "unchanged calls are not reported");
+  assert.deepEqual(s.decisions, ["2 search term(s) marked ask Rob."]);
+  assert.equal(out.json.tracking_rows[0].week_start, "2026-09-21");
+  assert.equal(out.json.sheet_row.Spend, 400);
+  assert.equal(out.json.sheet_row.Week, "2026-09-21");
+  assert.ok(!/NotBeKept|Should/.test(JSON.stringify(out.json)), "no contact data leaves the node");
+});
+
+await test("weekly report: no GHL and missing actions are flagged; GHL errors are flagged", async () => {
+  const bare = { ...weekRow, ghl_location_id: null, has_form_action: false, ad_calls_90s_seen: 0, tracking: [] };
+  const [noGhl] = await run("ff-weekly-report/build-client-report.js", {
+    input: [item(bare)], nodes: { Config: [item(weekCfg)], "Loop over clients": [item(bare)] },
+  });
+  assert.equal(noGhl.json.stats.ghl_google_leads, null);
+  assert.deepEqual(noGhl.json.stats.flags, ["No preplanning form conversion action."]);
+  const [err] = await run("ff-weekly-report/build-client-report.js", {
+    input: [item({ statusCode: 401, body: {} })], nodes: { Config: [item(weekCfg)], "Loop over clients": [item(weekRow)], "GHL: location token": [item({ statusCode: 201, body: { access_token: "loc-token" } })] },
+  });
+  assert.ok(err.json.stats.flags.some((f) => /GHL contacts could not be counted \(status 401\)/.test(f)));
+  const [noToken] = await run("ff-weekly-report/build-client-report.js", {
+    input: [item({ statusCode: 401, body: {} })],
+    nodes: { Config: [item(weekCfg)], "Loop over clients": [item(weekRow)], "GHL: location token": [item({ statusCode: 403, body: {} })] },
+  });
+  assert.ok(noToken.json.stats.flags.some((f) => /could not be opened with the FF GHL agency key \(status 403\)/.test(f)));
+  assert.equal(noToken.json.stats.ghl_google_leads, null);
+});
+
+await test("weekly report: Slack note has the key numbers, plain text, skips quiet clients", async () => {
+  const rows = [
+    { client_id: clientA, cost_micros: 400000000, currency_code: "USD", calls_90s: 12, forms: 3, tracking_ok: true, flags: [], changes: ["Spend up 33%: 400.00 USD from 300.00 USD."], decisions: ["2 new search term(s) with spend to sort: keep, block or ask Rob."], clients: { name: "McCall Gardens", process: "funeral_home" } },
+    { client_id: "b", cost_micros: 0, flags: [], changes: [], decisions: [], clients: { name: "Quiet Home", process: "funeral_home" } },
+  ];
+  const [out] = await run("ff-weekly-report/build-slack.js", { input: rows.map(item), nodes: { Config: [item(weekCfg)] } });
+  assert.equal(out.json.skip, false);
+  assert.match(out.json.text, /McCall Gardens: spent 400 USD, 12 call\(s\) 90s\+, 3 form\(s\)\. Tracking OK\./);
+  assert.match(out.json.text, /For you: 2 new search term/);
+  assert.ok(!/Quiet Home/.test(out.json.text));
+  assert.ok(!/[–—]/.test(out.json.text));
+  const [off] = await run("ff-weekly-report/build-slack.js", { input: rows.map(item), nodes: { Config: [item({ ...weekCfg, send_slack: false })] } });
+  assert.equal(off.json.skip, true);
+});
+
+await test("ghl setup: plans only the missing fields and tag; check reports without creating", async () => {
+  const nodes = (body) => ({
+    ...ctxNodes(body, staff),
+    Config: [item({ body, GHL_GOOGLE_ADS_TAG: "from google ads" })],
+    "Validate input": [item({ valid: true, action: body.action, client_id: clientA })],
+    "Get client": [item({ id: clientA, name: "McCall Gardens", ghl_location_id: "loc 1" })],
+    "GHL: location token": [item({ statusCode: 201, body: { access_token: "loc-token" } })],
+    "GHL: get custom fields": [item({ statusCode: 200, body: { customFields: [{ name: "GCLID", fieldKey: "contact.gclid" }, { name: "utm_source", fieldKey: "contact.utm_source" }] } })],
+  });
+  const tags = item({ statusCode: 200, body: { tags: [{ name: "Other" }] } });
+  const setup = await run("ff-ghl-setup/plan.js", { input: [tags], nodes: nodes({ action: "setup", client_id: clientA }) });
+  assert.equal(setup.length, 7, "6 missing fields + the tag");
+  assert.ok(setup.every((i) => i.json.kind === "create" && i.json.url.startsWith("https://services.leadconnectorhq.com/locations/loc%201/")));
+  assert.ok(!setup.some((i) => i.json.body.name === "gclid"));
+  assert.deepEqual(setup.at(-1).json.body, { name: "from google ads" });
+  const check = await run("ff-ghl-setup/plan.js", { input: [tags], nodes: nodes({ action: "check", client_id: clientA }) });
+  assert.equal(check.length, 1);
+  assert.equal(check[0].json.kind, "done");
+  assert.equal(check[0].json.body.ok, false);
+  assert.match(check[0].json.body.message, /missing fields: gbraid/);
+  const refused = await run("ff-ghl-setup/plan.js", { input: [item({ statusCode: 401 })], nodes: nodes({ action: "check", client_id: clientA }) });
+  assert.equal(refused[0].json.status, 502);
+  assert.match(refused[0].json.body.message, /GHL refused the sub-account token/);
+  const n = nodes({ action: "check", client_id: clientA });
+  n["GHL: location token"] = [item({ statusCode: 403, body: {} })];
+  const noAgency = await run("ff-ghl-setup/plan.js", { input: [tags], nodes: n });
+  assert.equal(noAgency[0].json.status, 502);
+  assert.match(noAgency[0].json.body.message, /oauth scopes/);
+});
+
+await test("ghl setup: sub-account list keeps only id, name and town, sorted", async () => {
+  const [ok] = await run("ff-ghl-setup/format-locations.js", {
+    input: [item({ statusCode: 200, body: { locations: [
+      { id: "b1", name: "Zeta Cremation", city: "Austin", state: "TX", email: "owner@zeta.test", phone: "+15125550100" },
+      { id: "a1", name: "McCall Gardens", city: "Mount Pleasant", state: "SC" },
+    ] } })],
+  });
+  assert.deepEqual(ok.json.body.locations, [
+    { id: "a1", name: "McCall Gardens", town: "Mount Pleasant, SC" },
+    { id: "b1", name: "Zeta Cremation", town: "Austin, TX" },
+  ]);
+  const [bad] = await run("ff-ghl-setup/format-locations.js", { input: [item({ statusCode: 403 })] });
+  assert.equal(bad.json.status, 502);
+  assert.match(bad.json.body.error, /agency-level key/);
+});
+
+await test("ghl setup: summary matches created items by name, not position", async () => {
+  const plan = [{ what: "field gbraid" }, { what: "field wbraid" }, { what: "tag from google ads" }].map(item);
+  const [out] = await run("ff-ghl-setup/summarize.js", {
+    input: [
+      item({ statusCode: 201, body: { tag: { name: "from google ads" } } }),
+      item({ statusCode: 422, body: { message: "exists" } }),
+      item({ statusCode: 201, body: { customField: { name: "gbraid" } } }),
+    ],
+    nodes: { Plan: plan },
+  });
+  assert.deepEqual(out.json.body.created, ["field gbraid", "tag from google ads"]);
+  assert.deepEqual(out.json.body.failed, ["field wbraid"]);
+  assert.equal(out.json.status, 502);
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ", some failed" : ""}`);

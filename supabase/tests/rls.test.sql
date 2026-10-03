@@ -88,6 +88,10 @@ begin
     insert into public.audits (client_id, customer_id, period_from, period_to, markdown) values (cl, cid, current_date - 90, current_date, '# Audit');
     insert into public.write_log (customer_id, is_test_account, workflow, operation, request, status) values (cid, true, 'test', 'noop', '{}', 'ok');
     insert into public.campaign_builds (client_id, customer_id, template, name, daily_budget_micros) values (cl, cid, 'A', 'Build', 10000000);
+    insert into public.tracking_health (customer_id, conversion_action_id, week_start, name)
+      values (cid, '70', date_trunc('week', current_date)::date - 7, 'Calls 90s+');
+    insert into public.weekly_stats (client_id, week_start, week_end, cost_micros)
+      values (cl, date_trunc('week', current_date)::date - 7, date_trunc('week', current_date)::date - 1, 5000000);
 
     insert into public.client_messages (id, client_id, direction, body)
       values (case cid when '1111111111' then 'cccccccc-0000-0000-0000-00000000000a'::uuid
@@ -302,6 +306,7 @@ from unnest(array[
   'ff_build_context(''99999999-0000-0000-0000-000000000001'')',
   'ff_audit_data(''1111111111'')',
   'ff_keyword_research_targets(null)',
+  'ff_weekly_report(current_date, null)',
   'ff_google_ads_secrets()',
   'ff_set_google_ads_secrets(''{}''::jsonb, null)'
 ]) f;
@@ -327,6 +332,37 @@ select is((select count(*) from public.dash_search_terms('2222222222', '10', cur
 select is((select count(*) from public.dash_search_terms('1111111111', '10', current_date - 30, current_date)),
           1::bigint, 'viewer A gets its own search terms');
 reset role;
+
+-- ---------------------------------------------------------------------------
+-- 11b. Weekly report (migration 13): weekly_stats per client, numbers from
+--      ff_weekly_report
+-- ---------------------------------------------------------------------------
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000c","role":"authenticated"}', true);
+select is((select array_agg(client_id) from public.weekly_stats), array['aaaaaaaa-0000-0000-0000-000000000001'::uuid],
+          'viewer A sees only its own weekly_stats');
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","role":"authenticated"}', true);
+select is((select count(*) from public.weekly_stats), 2::bigint, 'ff_staff sees every weekly_stats row');
+reset role;
+
+insert into public.conversion_actions (customer_id, conversion_action_id, name, type, category, status)
+  values ('1111111111', '71', 'Preplanning form', 'WEBPAGE', 'SUBMIT_LEAD_FORM', 'ENABLED');
+insert into public.conversion_daily (customer_id, campaign_id, conversion_action_id, date, all_conversions)
+  values ('1111111111', '10', '71', date_trunc('week', current_date)::date - 7, 2);
+update public.conversion_daily set all_conversions = 3
+  where customer_id = '1111111111' and conversion_action_id = '70';
+insert into public.campaign_daily (customer_id, campaign_id, date, cost_micros, clicks)
+  values ('1111111111', '10', date_trunc('week', current_date)::date - 7, 40000000, 12)
+  on conflict (customer_id, campaign_id, date) do update set cost_micros = excluded.cost_micros, clicks = excluded.clicks;
+select is((select (cost_micros, clicks, forms, has_call_action, has_form_action)::text
+             from public.ff_weekly_report(date_trunc('week', current_date)::date - 7, 'aaaaaaaa-0000-0000-0000-000000000001')),
+          '(40000000,12,2,t,t)', 'ff_weekly_report: spend, clicks and forms for the week');
+select is((select count(*) from public.ff_weekly_report(date_trunc('week', current_date)::date - 7, null)
+             where client_id = 'bbbbbbbb-0000-0000-0000-000000000002'), 1::bigint,
+          'ff_weekly_report: a client with an enabled campaign is included');
+select throws_ok($$insert into public.weekly_stats (client_id, week_start, week_end)
+                   values ('aaaaaaaa-0000-0000-0000-000000000001', '2026-09-29', '2026-10-05')$$,
+                 '23514', null, 'weekly_stats week_start must be a Monday');
 
 -- ---------------------------------------------------------------------------
 -- 12. Google Ads settings status: agency sees 5 rows and no secret values;

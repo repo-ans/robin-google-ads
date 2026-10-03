@@ -15,6 +15,8 @@
 // workflow reads them with "Get Google Ads secrets" (PLAN.md 3.5).
 //   FF Slack                       Slack API          - bot token (optional)
 //   FF DataForSEO                  Basic Auth         - DataForSEO API login + password
+//   FF GHL                         Header Auth        - Authorization: Bearer <GHL agency-level private integration key>
+//   FF Google Sheets               Google Sheets OAuth2 - FF Google login that can edit the client Sheets
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -29,7 +31,29 @@ const CRED = {
   openai: { openAiApi: { id: "", name: "FF OpenAI" } },
   slack: { slackApi: { id: "", name: "FF Slack" } },
   dataforseo: { httpBasicAuth: { id: "", name: "FF DataForSEO" } },
+  ghl: { httpHeaderAuth: { id: "", name: "FF GHL" } },
+  sheets: { googleSheetsOAuth2Api: { id: "", name: "FF Google Sheets" } },
 };
+const GHL_API = "https://services.leadconnectorhq.com";
+const GHL_HEADERS = { Version: "2021-07-28", Accept: "application/json" };
+// "FF GHL" is FF's agency-level key. Sub-account calls use a location token
+// made from it per client (POST /oauth/locationToken), so no client needs its
+// own key. The token lives only inside the execution (these workflows keep no
+// execution data).
+const ghlAuthHeaders = (tokenNode) => ({
+  ...GHL_HEADERS,
+  Authorization: `=Bearer {{ ($('${tokenNode}').first().json.body || {}).access_token || 'missing' }}`,
+});
+function ghlLocationToken(wf, name, pos, locationExpr) {
+  return wf.http(name, pos, {
+    method: "POST", cred: "ghl", url: `${GHL_API}/oauth/locationToken`, headers: GHL_HEADERS,
+    form: { companyId: "={{ $('Config').first().json.GHL_COMPANY_ID }}", locationId: `={{ ${locationExpr} }}` },
+    full: true, neverError: true,
+  }, {
+    onError: "continueRegularOutput",
+    notes: "Agency key (FF GHL) -> a short-lived token for this client's sub-account. Needs GHL_COMPANY_ID in Config and the oauth scopes on the agency key.",
+  });
+}
 const SB = "{{ $('Config').first().json.SUPABASE_URL }}";
 const API_V = "{{ $('Config').first().json.GOOGLE_ADS_API_VERSION }}";
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
@@ -108,6 +132,9 @@ class Workflow {
     } else if (p.cred === "dataforseo") {
       parameters.authentication = "genericCredentialType";
       parameters.genericAuthType = "httpBasicAuth";
+    } else if (p.cred === "ghl") {
+      parameters.authentication = "genericCredentialType";
+      parameters.genericAuthType = "httpHeaderAuth";
     }
     if (p.headers) {
       parameters.sendHeaders = true;
@@ -122,6 +149,11 @@ class Workflow {
       parameters.sendBody = true;
       parameters.specifyBody = "json";
       parameters.jsonBody = p.jsonBody;
+    }
+    if (p.form) {
+      parameters.sendBody = true;
+      parameters.contentType = "form-urlencoded";
+      parameters.bodyParameters = { parameters: Object.entries(p.form).map(([n, value]) => ({ name: n, value })) };
     }
     const options = {};
     if (p.full || p.neverError || p.text) {
@@ -1022,6 +1054,168 @@ function buildGoogleAdsSettings() {
   return wf.toJSON({ saveDataErrorExecution: "none", saveManualExecutions: false });
 }
 
+// ================================================================== ff-weekly-report
+function buildWeeklyReport() {
+  const W = "ff-weekly-report";
+  const wf = new Workflow(W);
+  wf.add({
+    name: "Schedule: weekly Monday 08:00", type: "n8n-nodes-base.scheduleTrigger", typeVersion: 1.2, position: P(0, 0),
+    parameters: { rule: { interval: [{ field: "weeks", triggerAtDay: [1], triggerAtHour: 8 }] } },
+    notes: "Monday 08:00, after the 06:00 sync, for last week (Monday to Sunday). Workflow settings > Timezone: FF's time zone.",
+  });
+  wf.add({
+    name: "Webhook", type: "n8n-nodes-base.webhook", typeVersion: 2, position: P(0, 2), webhookId: "ff-weekly-report",
+    parameters: { httpMethod: "POST", path: "ff/weekly-report", responseMode: "responseNode", options: { allowedOrigins: "http://localhost:5173" } },
+    notes: "Run the weekly report from the dashboard. Answers 202 at once; the report carries on. No Slack note unless the body has slack: true.",
+  });
+  wf.code("Config", W, "config.js", P(1, 1), { notes: "Set SUPABASE_URL, SUPABASE_ANON_KEY, SLACK_CHANNEL and DASHBOARD_URL after import." });
+  wf.if("Manual run?", "$('Config').first().json.trigger === 'manual'", P(2, 1));
+  AUTH_NAMES.forEach((name, i) => {
+    const copy = JSON.parse(JSON.stringify(whoami.nodes.find((n) => n.name === name)));
+    delete copy.id;
+    copy.position = name === "Respond: denied" ? P(7, 3) : P(3 + i, 2);
+    wf.add(copy);
+  });
+  wf.add({
+    name: "Respond: accepted", type: "n8n-nodes-base.respondToWebhook", typeVersion: 1.1, position: P(8, 2),
+    parameters: {
+      respondWith: "json",
+      responseBody: "={{ JSON.stringify({ status: 'started', message: 'Weekly report started for the week of ' + $('Config').first().json.week_start + '. It appears on the client page when it finishes.' }) }}",
+      options: { responseCode: 202 },
+    },
+  });
+  wf.sb("Get report numbers", P(9, 1), "POST", "rpc/ff_weekly_report", { alwaysOutputData: true, executeOnce: true },
+    { body: "={{ JSON.stringify({ p_week_start: $('Config').first().json.week_start, p_client_id: $('Config').first().json.only_client_id }) }}" });
+  wf.code("Prepare clients", W, "prepare-clients.js", P(10, 1));
+  wf.if("Any clients?", "!$json.none", P(11, 1));
+  wf.add({
+    name: "Loop over clients", type: "n8n-nodes-base.splitInBatches", typeVersion: 3, position: P(12, 1), parameters: { batchSize: 1, options: {} },
+    notes: "One client per pass, so $('Loop over clients').first() is always the current client. One client failing does not stop the others.",
+  });
+  wf.if("GHL set up?", "Boolean($json.ghl_location_id)", P(12, 3));
+  ghlLocationToken(wf, "GHL: location token", P(13, 2), "$('Loop over clients').first().json.ghl_location_id");
+  wf.http("GHL: count Google Ads leads", P(14, 2), {
+    method: "POST", url: `${GHL_API}/contacts/search`, headers: ghlAuthHeaders("GHL: location token"),
+    jsonBody: "={{ JSON.stringify({ locationId: $('Loop over clients').first().json.ghl_location_id, page: 1, pageLimit: 1, filters: [{ field: 'tags', operator: 'contains', value: [$('Config').first().json.GHL_GOOGLE_ADS_TAG] }, { field: 'dateAdded', operator: 'range', value: { gte: $('Loop over clients').first().json.week_start + 'T00:00:00.000Z', lte: $('Loop over clients').first().json.week_end + 'T23:59:59.999Z' } }] }) }}",
+    full: true, neverError: true,
+  }, {
+    onError: "continueRegularOutput",
+    notes: "Only the total is used. The answer can hold one contact, so this workflow keeps no execution data (hard rule 4).",
+  });
+  wf.code("Build client report", W, "build-client-report.js", P(15, 3));
+  wf.sb("Save weekly stats", P(15, 3), "POST", "weekly_stats?on_conflict=client_id,week_start", { onError: "continueRegularOutput" },
+    { prefer: "resolution=merge-duplicates,return=minimal", body: "={{ JSON.stringify([$json.stats]) }}", full: true, neverError: true });
+  wf.sb("Save tracking health", P(16, 3), "POST", "tracking_health?on_conflict=customer_id,conversion_action_id,week_start", { onError: "continueRegularOutput" },
+    { prefer: "resolution=merge-duplicates,return=minimal", body: "={{ JSON.stringify($('Build client report').first().json.tracking_rows) }}", full: true, neverError: true });
+  wf.if("Google Sheet set?", "Boolean($('Build client report').first().json.google_sheet_id)", P(17, 3));
+  wf.inline("Sheet row", "return [{ json: $('Build client report').first().json.sheet_row }];", P(18, 2));
+  wf.add({
+    name: "Write Google Sheet", type: "n8n-nodes-base.googleSheets", typeVersion: 4.5, position: P(19, 2), credentials: CRED.sheets,
+    parameters: {
+      operation: "appendOrUpdate",
+      documentId: { __rl: true, value: "={{ $('Build client report').first().json.google_sheet_id }}", mode: "id" },
+      sheetName: { __rl: true, value: "={{ $('Build client report').first().json.sheet_tab }}", mode: "name" },
+      columns: { mappingMode: "autoMapInputData", value: {}, matchingColumns: ["Week"], schema: [] },
+      options: {},
+    },
+    onError: "continueRegularOutput",
+    notes: "One row per week in the client's Sheet (row 1 = the column names, see README). Matches on Week, so a re-run updates the row instead of adding another.",
+  });
+  wf.if("Sheet written?", "!$json.error", P(20, 2));
+  wf.sb("Mark sheet written", P(21, 1), "PATCH",
+    "weekly_stats?client_id=eq.{{ $('Build client report').first().json.client_id }}&week_start=eq.{{ $('Build client report').first().json.week_start }}",
+    { onError: "continueRegularOutput" },
+    { prefer: "return=minimal", body: "={{ JSON.stringify({ sheet_written_at: new Date().toISOString() }) }}", full: true, neverError: true });
+
+  wf.sb("Get week rows", P(13, 0), "GET",
+    "weekly_stats?week_start=eq.{{ $('Config').first().json.week_start }}&select=*,clients(name,process)&order=cost_micros.desc",
+    { alwaysOutputData: true, executeOnce: true });
+  wf.code("Build Slack note", W, "build-slack.js", P(14, 0), { executeOnce: true });
+  wf.if("Send Slack note?", "!$json.skip", P(15, 0));
+  wf.slack("Send Slack note", P(16, 0), "={{ $json.text }}");
+
+  wf.connect("Schedule: weekly Monday 08:00", "Config");
+  wf.connect("Webhook", "Config");
+  wf.connect("Config", "Manual run?");
+  wf.connect("Manual run?", "Auth: read token", 0);
+  wf.connect("Manual run?", "Get report numbers", 1);
+  wf.chain(...AUTH_NAMES.slice(0, 5));
+  wf.connect("Auth: allowed?", "Respond: accepted", 0);
+  wf.connect("Auth: allowed?", "Respond: denied", 1);
+  wf.connect("Respond: accepted", "Get report numbers");
+  wf.chain("Get report numbers", "Prepare clients", "Any clients?");
+  wf.connect("Any clients?", "Loop over clients", 0);
+  wf.connect("Any clients?", "Get week rows", 1);
+  wf.connect("Loop over clients", "Get week rows", 0);
+  wf.connect("Loop over clients", "GHL set up?", 1);
+  wf.connect("GHL set up?", "GHL: location token", 0);
+  wf.connect("GHL: location token", "GHL: count Google Ads leads");
+  wf.connect("GHL set up?", "Build client report", 1);
+  wf.chain("GHL: count Google Ads leads", "Build client report", "Save weekly stats", "Save tracking health", "Google Sheet set?");
+  wf.connect("Google Sheet set?", "Sheet row", 0);
+  wf.connect("Google Sheet set?", "Loop over clients", 1);
+  wf.chain("Sheet row", "Write Google Sheet", "Sheet written?");
+  wf.connect("Sheet written?", "Mark sheet written", 0);
+  wf.connect("Sheet written?", "Loop over clients", 1);
+  wf.connect("Mark sheet written", "Loop over clients");
+  wf.chain("Get week rows", "Build Slack note", "Send Slack note?");
+  wf.connect("Send Slack note?", "Send Slack note", 0);
+  // The GHL search answer can contain a contact: keep no execution data at all.
+  return wf.toJSON({ saveDataErrorExecution: "none", saveManualExecutions: false });
+}
+
+// ================================================================== ff-ghl-setup
+function buildGhlSetup() {
+  const W = "ff-ghl-setup";
+  const wf = new Workflow(W);
+  const allowed = webhookFront(wf, {
+    path: "ff/ghl-setup", roles: AGENCY, settings: { GHL_COMPANY_ID: "SET-ME", GHL_GOOGLE_ADS_TAG: "from google ads" },
+    doc: "ff-ghl-setup: 'list_locations' lists FF's GHL sub-accounts (to pick a client's location on Edit client). 'check' / 'setup': opens the client's sub-account with the FF GHL agency key and checks (setup: creates) the Google Ads click fields (gclid, gbraid, wbraid, utm_*) and the 'from google ads' tag. Nothing else in GHL is changed. GHL_COMPANY_ID and GHL_GOOGLE_ADS_TAG must match ff-weekly-report.",
+  });
+  const ok = validated(wf, allowed, { workflow: W, pos: P(8, 1) });
+  wf.if("List locations?", "$json.action === 'list_locations'", P(10, 1));
+  wf.http("GHL: list locations", P(11, -1), {
+    method: "GET", cred: "ghl", headers: GHL_HEADERS, full: true, neverError: true,
+    url: `=${GHL_API}/locations/search?companyId={{ encodeURIComponent($('Config').first().json.GHL_COMPANY_ID) }}&skip=0&limit=1000`,
+  }, { notes: "Read: FF's sub-accounts (id, name, town) with the agency key." });
+  wf.code("Format locations", W, "format-locations.js", P(12, -1));
+  wf.sb("Get client", P(11, 1), "GET",
+    `clients?id=eq.${uuidOrZero("$json.client_id")}&select=id,name,ghl_location_id`, { alwaysOutputData: true });
+  wf.inline("Check client",
+    "const c = $input.first().json || {};\nif (!c.id) return [{ json: { ok: false, status: 404, body: { error: 'Client not found.' } } }];\nif (!c.ghl_location_id) return [{ json: { ok: false, status: 400, body: { error: 'Pick the GHL sub-account on Edit client first.' } } }];\nreturn [{ json: { ok: true } }];",
+    P(12, 1));
+  wf.if("Client ok?", "$json.ok === true", P(13, 1));
+  ghlLocationToken(wf, "GHL: location token", P(14, 0), "$('Get client').first().json.ghl_location_id");
+  const loc = "{{ encodeURIComponent($('Get client').first().json.ghl_location_id) }}";
+  wf.http("GHL: get custom fields", P(15, 0), {
+    method: "GET", url: `=${GHL_API}/locations/${loc}/customFields?model=contact`, headers: ghlAuthHeaders("GHL: location token"), full: true, neverError: true,
+  }, { notes: "Read: the sub-account's contact custom fields." });
+  wf.http("GHL: get tags", P(16, 0), {
+    method: "GET", url: `=${GHL_API}/locations/${loc}/tags`, headers: ghlAuthHeaders("GHL: location token"), full: true, neverError: true,
+  });
+  wf.code("Plan", W, "plan.js", P(17, 0));
+  wf.if("Anything to create?", "$json.kind === 'create'", P(18, 0));
+  wf.http("GHL: create", P(19, -1), {
+    method: "POST", url: "={{ $json.url }}", headers: ghlAuthHeaders("GHL: location token"),
+    jsonBody: "={{ JSON.stringify($json.body) }}", full: true, neverError: true, batch: 300,
+  }, { notes: "One field or tag per item: contact custom fields (TEXT) and the Google Ads tag. Runs only for 'setup'." });
+  wf.code("Summarize", W, "summarize.js", P(20, -1));
+
+  wf.connect(ok, "List locations?", 0);
+  wf.connect("List locations?", "GHL: list locations", 0);
+  wf.connect("List locations?", "Get client", 1);
+  wf.chain("GHL: list locations", "Format locations", "Respond");
+  wf.chain("Get client", "Check client", "Client ok?");
+  wf.connect("Client ok?", "GHL: location token", 0);
+  wf.connect("Client ok?", "Respond", 1);
+  wf.chain("GHL: location token", "GHL: get custom fields", "GHL: get tags", "Plan", "Anything to create?");
+  wf.connect("Anything to create?", "GHL: create", 0);
+  wf.connect("Anything to create?", "Respond", 1);
+  wf.chain("GHL: create", "Summarize", "Respond");
+  // A sub-account token passes through here: keep no execution data at all.
+  return wf.toJSON({ saveDataErrorExecution: "none", saveManualExecutions: false });
+}
+
 // ------------------------------------------------------------------ write all
 const builders = {
   "ff-sync": buildSync,
@@ -1037,6 +1231,8 @@ const builders = {
   "ff-audit": buildAudit,
   "ff-dataforseo": buildDataForSEO,
   "ff-google-ads-settings": buildGoogleAdsSettings,
+  "ff-weekly-report": buildWeeklyReport,
+  "ff-ghl-setup": buildGhlSetup,
 };
 
 for (const [name, build] of Object.entries(builders)) {

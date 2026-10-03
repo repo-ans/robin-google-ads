@@ -12,9 +12,10 @@ Dashboard button -> n8n webhook (JWT + role check) -> Google Ads and/or Supabase
 |---|---|
 | `web/` | React + Vite + TypeScript dashboard (Netlify) |
 | `supabase/` | Migrations and RLS tests |
-| `n8n/` | 14 n8n workflow exports (`ff-*.json`), generated from `n8n/src/` |
+| `n8n/` | 16 n8n workflow exports (`ff-*.json`), generated from `n8n/src/` |
 | `scripts/` | n8n build and checks, Code node tests, DB and auth tests |
 | `audits/` | Audit reports downloaded from the dashboard (`<client-slug>.md`) |
+| `docs/` | `tracking-setup.md` - calls 90s+, the GHL preplanning form, the website script and the weekly report, step by step |
 
 ## 1. Supabase (FF project)
 
@@ -44,6 +45,8 @@ Dashboard button -> n8n webhook (JWT + role check) -> Google Ads and/or Supabase
 | FF OpenAI | OpenAI | FF-owned API key |
 | FF Slack | Slack API | Bot token (optional - only for Slack notes) |
 | FF DataForSEO | Basic Auth | DataForSEO API login + API password |
+| FF GHL | Header Auth | Name `Authorization`, value `Bearer <GHL agency-level private integration key>` (scopes in docs/tracking-setup.md). Also set `GHL_COMPANY_ID` in the Config of ff-weekly-report and ff-ghl-setup |
+| FF Google Sheets | Google Sheets OAuth2 API | FF Google account that can edit the client Sheets |
 
 ### Google Ads connection (dashboard, not n8n)
 
@@ -63,6 +66,7 @@ In every workflow:
 - open any node showing a credential warning and pick the credential with the same name;
 - on the **Webhook** node, set Allowed Origins to the Netlify URL;
 - Workflow settings > Timezone: FF's time zone;
+- ff-weekly-report: also `SLACK_CHANNEL` (Rob's channel) and `DASHBOARD_URL` in Config;
 - activate it.
 
 | Workflow | What | Who |
@@ -81,6 +85,8 @@ In every workflow:
 | ff-audit | Read-only audit; Rob marks reviewed | staff / Rob |
 | ff-dataforseo | Weekly keyword volume, CPC, related keywords (DataForSEO + Google Keyword Planner) | schedule; staff |
 | ff-google-ads-settings | Save Google Ads values, Connect with Google, Test connection (Settings page) | Rob; staff can test |
+| ff-weekly-report | Monday 08:00: weekly_stats + tracking_health, GHL lead count, client Google Sheet row, Slack note to Rob. Also "Run for last week" on the client page (no Slack) | schedule; staff |
+| ff-ghl-setup | Pick from GHL (Edit client: lists the sub-accounts), Check GHL / Set up GHL fields (client page): gclid, gbraid, wbraid, utm_* fields and the "from google ads" tag | staff |
 
 **Google Ads writes** (build, apply, remove): Rob only, `validateOnly` first, created PAUSED, logged in `write_log`.
 They run on a Google Ads **test account** at any time; on a live account only after Rob turns
