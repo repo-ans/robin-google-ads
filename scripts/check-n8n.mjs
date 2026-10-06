@@ -2,7 +2,7 @@
 // Static checks on every FF n8n export in /n8n. Run: node scripts/check-n8n.mjs
 //
 // Fails (exit 1) when:
-//   - a workflow other than the three write workflows calls a Google Ads write
+//   - a workflow other than the four write workflows calls a Google Ads write
 //     endpoint (reads allowed: googleAds:search/searchStream,
 //     :generateKeywordHistoricalMetrics, geoTargetConstants:suggest)
 //   - a write workflow has a Google Ads write without a validateOnly call first
@@ -22,7 +22,8 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const dir = join(root, "n8n");
 
-const WRITE_WORKFLOWS = new Set(["ff-build-campaign", "ff-apply-campaign-action", "ff-delete-campaign"]);
+// ff-case-match (PDF task 6) uploads signed cases as offline conversions - added 2026-10-05, needs Rob's OK.
+const WRITE_WORKFLOWS = new Set(["ff-build-campaign", "ff-apply-campaign-action", "ff-delete-campaign", "ff-case-match"]);
 const READ_ENDPOINTS = [/googleAds:search(Stream)?\b/, /:generateKeywordHistoricalMetrics\b/, /geoTargetConstants:suggest\b/, /customers:listAccessibleCustomers\b/, /oauth2\.googleapis\.com/];
 // Google Ads values are entered on the dashboard and stored in Supabase
 // (private.google_ads_secrets), so there are no Google credentials in n8n.

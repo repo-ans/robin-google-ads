@@ -664,11 +664,11 @@ function buildApply() {
   const wf = new Workflow(W);
   const allowed = webhookFront(wf, {
     path: "ff/apply-campaign-action", roles: ["rob_admin"], settings: { GOOGLE_ADS_API_VERSION: "v25" },
-    doc: "ff-apply-campaign-action: Confirm & Apply for a proposed budget / pause / resume (reference apply-campaign-action). rob_admin only; test account or writes_enabled; validateOnly first; every attempt logged in write_log.",
+    doc: "ff-apply-campaign-action: Confirm & Apply for a proposed budget / pause / resume (reference apply-campaign-action), adding negative keywords from the Search Terms tab (campaign or FF Universal Negatives list), and call tracking setup (90s call conversions, call reporting, account call asset). rob_admin only; test account or writes_enabled; validateOnly first; every attempt logged in write_log.",
   });
   const ok = validated(wf, allowed, { workflow: W, pos: P(8, 1) });
   wf.sb("Get action context", P(10, 1), "POST", "rpc/ff_action_context", {},
-    { body: "={{ JSON.stringify({ p_source: $json.source, p_source_id: $json.source_id }) }}" });
+    { body: "={{ JSON.stringify({ p_source: $json.source, p_source_id: $json.source_id, p_customer_id: $json.customer_id || null }) }}" });
   wf.code("Plan change", W, "plan.js", P(11, 1));
   wf.if("Allowed?", "$json.ok === true", P(12, 1));
   wf.googleSecrets("Get Google Ads secrets", P(13, -1));
@@ -687,11 +687,64 @@ function buildApply() {
     notes: "The real change. Only reached after the guards and a clean validateOnly call.",
   });
   writeTail(wf, { records: "Plan records", recordsFile: "records.js", workflow: W, pos: P(18, 1) });
+
+  // Call tracking setup (source "tracking"): step A = account settings and the
+  // 90-second call conversion actions (one item per request), step B = the
+  // account-level call asset, built from step A's answer. Each step: validateOnly first.
+  const plan = "$('Plan change').first().json";
+  wf.if("Which change?", `${plan}.source === 'tracking'`, P(13, 2));
+  wf.if("Tracking: step A?", `${plan}.tracking.requests_a.length > 0`, P(14, 3));
+  wf.inline("Tracking: requests", `return ${plan}.tracking.requests_a.map((r) => ({ json: r }));`, P(15, 3), { executeOnce: true });
+  const trackUrl = `=https://googleads.googleapis.com/${API_V}/customers/{{ $('Plan change').first().json.customer_id }}{{ $json.url_suffix }}`;
+  wf.googleAds("Validate tracking", P(16, 3), {
+    url: trackUrl, token: "Refresh Google token", login: "$('Plan change').first().json.login_customer_id",
+    body: "={{ JSON.stringify(Object.assign({}, $json.body, { validateOnly: true })) }}",
+    notes: "validateOnly for step A: account settings, then the call conversion actions. One call per item.",
+  });
+  wf.inline("Check tracking", `${readFileSync(join(n8nDir, "src", "shared", "gads.js"), "utf8")}\nconst errors = $input.all().map((i) => gadsError(i.json)).filter(Boolean);\nreturn [{ json: { ok: errors.length === 0, error: errors.join(' | ') || null } }];`, P(17, 3));
+  wf.if("Tracking valid?", "$json.ok === true", P(18, 3));
+  wf.inline("Tracking: real requests", `return $('Tracking: requests').all().map((i) => ({ json: i.json }));`, P(19, 3), { executeOnce: true });
+  wf.googleAds("Apply tracking", P(20, 3), {
+    url: trackUrl, token: "Refresh Google token", login: "$('Plan change').first().json.login_customer_id",
+    body: "={{ JSON.stringify($json.body) }}",
+    notes: "Step A for real, after a clean validateOnly.",
+  });
+  wf.code("Plan call asset", W, "plan-asset.js", P(21, 4), { executeOnce: true });
+  wf.if("Call asset needed?", "$json.need === true", P(22, 4));
+  const assetUrl = `=https://googleads.googleapis.com/${API_V}/customers/{{ $('Plan change').first().json.customer_id }}/googleAds:mutate`;
+  wf.googleAds("Validate call asset", P(23, 4), {
+    url: assetUrl, token: "Refresh Google token", login: "$('Plan change').first().json.login_customer_id",
+    body: "={{ JSON.stringify(Object.assign({}, $json.body, { validateOnly: true })) }}",
+    notes: "validateOnly for step B: the account-level call asset.",
+  });
+  wf.inline("Check call asset", gadsCheck("Validate call asset"), P(24, 4));
+  wf.if("Call asset valid?", "$json.ok === true", P(25, 4));
+  wf.googleAds("Apply call asset", P(26, 4), {
+    url: assetUrl, token: "Refresh Google token", login: "$('Plan change').first().json.login_customer_id",
+    body: "={{ JSON.stringify($('Plan call asset').first().json.body) }}",
+    notes: "Step B for real: call asset on the whole account (every campaign, also future ones).",
+  });
+
   wf.connect(ok, "Get action context", 0);
   wf.chain("Get action context", "Plan change", "Allowed?");
   wf.connect("Allowed?", "Get Google Ads secrets", 0);
   wf.connect("Allowed?", "Plan records", 1);
-  wf.chain("Get Google Ads secrets", "Refresh Google token", "Validate change", "Check validation", "Valid?");
+  wf.chain("Get Google Ads secrets", "Refresh Google token", "Which change?");
+  wf.connect("Which change?", "Tracking: step A?", 0);
+  wf.connect("Which change?", "Validate change", 1);
+  wf.connect("Tracking: step A?", "Tracking: requests", 0);
+  wf.connect("Tracking: step A?", "Plan call asset", 1);
+  wf.chain("Tracking: requests", "Validate tracking", "Check tracking", "Tracking valid?");
+  wf.connect("Tracking valid?", "Tracking: real requests", 0);
+  wf.connect("Tracking valid?", "Plan records", 1);
+  wf.chain("Tracking: real requests", "Apply tracking", "Plan call asset", "Call asset needed?");
+  wf.connect("Call asset needed?", "Validate call asset", 0);
+  wf.connect("Call asset needed?", "Plan records", 1);
+  wf.chain("Validate call asset", "Check call asset", "Call asset valid?");
+  wf.connect("Call asset valid?", "Apply call asset", 0);
+  wf.connect("Call asset valid?", "Plan records", 1);
+  wf.connect("Apply call asset", "Plan records");
+  wf.chain("Validate change", "Check validation", "Valid?");
   wf.connect("Valid?", "Apply change", 0);
   wf.connect("Valid?", "Plan records", 1);
   wf.connect("Apply change", "Plan records");
@@ -888,6 +941,99 @@ function buildReview() {
   return wf.toJSON();
 }
 
+
+// ================================================================== ff-case-match
+// PDF task 6: monthly case match. The no-name case list comes from the
+// dashboard, is matched by Google Ads (click ids, hashed email/phone, call
+// details), and is never stored: this workflow keeps no execution data at all,
+// and only counts go to case_match_runs. A Google Ads write workflow:
+// validateOnly first, upload Rob only, test account or writes_enabled, logged.
+function buildCaseMatch() {
+  const W = "ff-case-match";
+  const wf = new Workflow(W);
+  const allowed = webhookFront(wf, {
+    path: "ff/case-match", roles: AGENCY, settings: { GOOGLE_ADS_API_VERSION: "v25" },
+    doc: "ff-case-match: monthly case match - check (FF staff or Rob, validateOnly) or upload (Rob) signed cases as offline conversions. Case lists are never stored; counts only.",
+  });
+  const ok = validated(wf, allowed, { workflow: W, pos: P(8, 1) });
+  wf.sb("Get case match context", P(10, 1), "POST", "rpc/ff_case_match_context", {},
+    { body: "={{ JSON.stringify({ p_client_id: $json.client_id, p_customer_id: $json.customer_id }) }}" });
+  wf.sb("Get earlier uploads", P(11, 1), "GET",
+    `case_match_runs?select=id,created_at&client_id=eq.${uuidOrZero("$('Validate input').first().json.client_id")}&month=eq.{{ $('Validate input').first().json.month }}-01&validate_only=eq.false&status=in.(ok,partial)&order=created_at.desc`,
+    { alwaysOutputData: true, executeOnce: true });
+  wf.code("Plan uploads", W, "plan.js", P(12, 1), { executeOnce: true });
+  wf.if("Allowed?", "$json.ok === true", P(13, 1));
+  wf.googleSecrets("Get Google Ads secrets", P(14, -1));
+  wf.googleToken("Refresh Google token", P(14, 0));
+  wf.inline("Upload requests", "const p = $('Plan uploads').first().json;\nreturn p.uploads.map((u) => ({ json: { kind: u.kind, url_suffix: u.url_suffix, sent: u.sent, body: u.body } }));", P(15, 0), { executeOnce: true });
+  const url = `=https://googleads.googleapis.com/${API_V}/customers/{{ $('Plan uploads').first().json.customer_id }}{{ $json.url_suffix }}`;
+  wf.googleAds("Check upload", P(16, 0), {
+    url, token: "Refresh Google token", login: "$('Plan uploads').first().json.login_customer_id",
+    body: "={{ JSON.stringify(Object.assign({}, $json.body, { validateOnly: true })) }}",
+    notes: "validateOnly: Google checks every case without recording anything. One call per upload kind (click, call).",
+  });
+  wf.code("Check validation", W, "check.js", P(17, 0));
+  wf.if("Upload now?", "$json.go === true", P(18, 0));
+  wf.inline("Real upload requests", "return $('Upload requests').all().map((i) => ({ json: i.json }));", P(19, -1), { executeOnce: true });
+  wf.googleAds("Upload conversions", P(20, -1), {
+    url, token: "Refresh Google token", login: "$('Plan uploads').first().json.login_customer_id",
+    body: "={{ JSON.stringify($json.body) }}",
+    notes: "The real upload. Only reached for action upload (Rob), after the guards and a clean validateOnly call.",
+  });
+  wf.code("Case match records", W, "records.js", P(21, 1), { executeOnce: true });
+  wf.sbGeneric("Save records", P(22, 1), "rest/v1/", "case_match_runs (counts only) and write_log (summaries only).");
+  wf.inline("Result", "return [{ json: $('Case match records').first().json.respond }];", P(23, 1), { executeOnce: true });
+  if (!wf.nodes.some((n) => n.name === "Respond")) wf.respond("Respond", P(24, 1));
+
+  wf.connect(ok, "Get case match context", 0);
+  wf.chain("Get case match context", "Get earlier uploads", "Plan uploads", "Allowed?");
+  wf.connect("Allowed?", "Get Google Ads secrets", 0);
+  wf.connect("Allowed?", "Case match records", 1);
+  wf.chain("Get Google Ads secrets", "Refresh Google token", "Upload requests", "Check upload", "Check validation", "Upload now?");
+  wf.connect("Upload now?", "Real upload requests", 0);
+  wf.connect("Upload now?", "Case match records", 1);
+  wf.chain("Real upload requests", "Upload conversions", "Case match records", "Save records", "Result", "Respond");
+  // The case list is personal data: keep nothing, not even failed executions.
+  return wf.toJSON({ saveDataSuccessExecution: "none", saveDataErrorExecution: "none", saveManualExecutions: false, saveExecutionProgress: false });
+}
+
+
+// ================================================================== ff-gaql
+// PDF task 1: Claude Code (scripts/ff.mjs gaql) and the FF team read Google Ads
+// live with FF's credentials, without any secret on a laptop. Read only:
+// googleAds:searchStream is the only Google Ads call. Search terms are
+// name-filtered before they are returned; nothing is kept (no execution data).
+function buildGaql() {
+  const W = "ff-gaql";
+  const wf = new Workflow(W);
+  const allowed = webhookFront(wf, {
+    path: "ff/gaql", roles: AGENCY, settings: { GOOGLE_ADS_API_VERSION: "v25" },
+    doc: "ff-gaql: one read-only GAQL query against an FF Google Ads account (for Claude Code skills and FF staff). Read only.",
+  });
+  const ok = validated(wf, allowed, { workflow: W, pos: P(8, 1) });
+  wf.sb("Get account", P(10, 1), "GET",
+    `ad_accounts?customer_id=eq.${customerOrZero("$json.customer_id")}&select=customer_id,login_customer_id,descriptive_name,clients(towns,own_brand_terms,competitor_terms)`,
+    { alwaysOutputData: true });
+  wf.inline("Check account", "const a = $input.first().json || {};\nreturn [{ json: a.customer_id ? { ok: true } : { ok: false, status: 404, body: { error: 'That account is not in the dashboard. Run a sync first.' } } }];", P(11, 1));
+  wf.if("Account ok?", "$json.ok === true", P(12, 1));
+  wf.googleSecrets("Get Google Ads secrets", P(13, 0));
+  wf.googleToken("Refresh Google token", P(14, 0));
+  wf.googleAds("Run query", P(15, 0), {
+    url: `=https://googleads.googleapis.com/${API_V}/customers/{{ $('Validate input').first().json.customer_id }}/googleAds:searchStream`,
+    body: "={{ JSON.stringify({ query: $('Validate input').first().json.query }) }}",
+    token: "Refresh Google token", login: "$('Get account').first().json.login_customer_id", text: true, timeout: 120000,
+    notes: "Read only. Text response so n8n does not split the JSON array.",
+  });
+  wf.code("Shape result", W, "shape.js", P(16, 0));
+  wf.connect(ok, "Get account", 0);
+  wf.chain("Get account", "Check account", "Account ok?");
+  wf.connect("Account ok?", "Get Google Ads secrets", 0);
+  wf.connect("Account ok?", "Respond", 1);
+  wf.chain("Get Google Ads secrets", "Refresh Google token", "Run query", "Shape result", "Respond");
+  // Answers can hold raw search terms before the filter: keep no execution data.
+  return wf.toJSON({ saveDataSuccessExecution: "none", saveDataErrorExecution: "none", saveManualExecutions: false });
+}
+
 // ================================================================== ff-audit
 function buildAudit() {
   const W = "ff-audit";
@@ -901,10 +1047,12 @@ function buildAudit() {
   wf.sb("Get account", P(11, 0), "GET", "ad_accounts?customer_id=eq.{{ $json.customer_id }}&select=customer_id,client_id,descriptive_name,clients(name)", { alwaysOutputData: true });
   wf.inline("Check account", "const a = $input.first().json || {};\nconst v = $('Validate input').first().json;\nreturn [{ json: a.client_id === v.client_id ? { ok: true } : { ok: false, status: 404, body: { error: 'That account does not belong to this client.' } } }];", P(12, 0));
   wf.if("Account ok?", "$json.ok === true", P(13, 0));
-  wf.sb("Get audit data", P(14, -1), "POST", "rpc/ff_audit_data", {}, { body: "={{ JSON.stringify({ p_customer_id: $('Validate input').first().json.customer_id }) }}" });
+  wf.sb("Get audit data", P(14, -1), "POST", "rpc/ff_audit_data", { notes: "Full response + never error: a database failure becomes a plain message for the dashboard instead of a silent stop." },
+    { body: "={{ JSON.stringify({ p_customer_id: $('Validate input').first().json.customer_id }) }}", full: true, neverError: true });
   wf.code("Write audit", W, "write-audit.js", P(15, -1));
-  wf.sb("Save audit", P(16, -1), "POST", "audits", {}, { prefer: "return=representation", body: "={{ JSON.stringify($json.row) }}" });
-  wf.inline("Audit result", "const row = $input.first().json;\nreturn [{ json: { status: 200, body: { ok: true, id: row.id, summary: row.summary } } }];", P(17, -1));
+  wf.if("Audit written?", "$json.ok === true", P(16, -1));
+  wf.sb("Save audit", P(17, -2), "POST", "audits", {}, { prefer: "return=representation", body: "={{ JSON.stringify($json.row) }}", full: true, neverError: true });
+  wf.inline("Audit result", "const r = $input.first().json || {};\nconst row = Array.isArray(r.body) ? r.body[0] : r.body;\nif (!(r.statusCode >= 200 && r.statusCode < 300) || !row || !row.id) {\n  const msg = (r.body && (r.body.message || r.body.details)) || 'status ' + r.statusCode;\n  return [{ json: { status: 500, body: { error: 'The audit was written but could not be saved: ' + String(msg).slice(0, 200) } } }];\n}\nreturn [{ json: { status: 200, body: { ok: true, id: row.id, summary: row.summary } } }];", P(18, -2));
   wf.sb("Mark reviewed", P(11, 2), "PATCH", "audits?id=eq.{{ $json.audit_id }}&status=eq.draft", { alwaysOutputData: true }, {
     prefer: "return=representation",
     body: "={{ JSON.stringify({ status: 'reviewed_by_rob', reviewed_by: $('Auth: check role').first().json.user.user_id, reviewed_at: new Date().toISOString() }) }}",
@@ -917,7 +1065,10 @@ function buildAudit() {
   wf.chain("Get account", "Check account", "Account ok?");
   wf.connect("Account ok?", "Get audit data", 0);
   wf.connect("Account ok?", "Respond", 1);
-  wf.chain("Get audit data", "Write audit", "Save audit", "Audit result", "Respond");
+  wf.chain("Get audit data", "Write audit", "Audit written?");
+  wf.connect("Audit written?", "Save audit", 0);
+  wf.connect("Audit written?", "Respond", 1);
+  wf.chain("Save audit", "Audit result", "Respond");
   wf.chain("Mark reviewed", "Review result", "Respond");
   return wf.toJSON();
 }
@@ -1225,6 +1376,8 @@ const builders = {
   "ff-send-reply": buildSendReply,
   "ff-apply-campaign-action": buildApply,
   "ff-delete-campaign": buildDelete,
+  "ff-case-match": buildCaseMatch,
+  "ff-gaql": buildGaql,
   "ff-build-campaign": buildBuild,
   "ff-client-admin": buildClientAdmin,
   "ff-review-actions": buildReview,

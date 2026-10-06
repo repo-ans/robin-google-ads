@@ -359,7 +359,7 @@ await test("audit: issues found follow the SOP and the markdown has no long dash
     geo: { presence_cost: 1000, interest_cost: 200 }, recommendations: [], changes_30d: {},
   };
   const [out] = await run("ff-audit/write-audit.js", {
-    input: [item(data)],
+    input: [item({ statusCode: 200, body: data })],
     nodes: ctxNodes({}, staff, {
       "Validate input": [item({ client_id: clientA, customer_id: "1234567890" })],
       "Get account": [item({ clients: { name: "McCall Gardens" } })],
@@ -371,6 +371,19 @@ await test("audit: issues found follow the SOP and the markdown has no long dash
   }
   assert.ok(!/[–—]/.test(md));
   assert.ok(out.json.row.summary.issues_high >= 2);
+});
+
+await test("audit: a database failure (e.g. statement timeout) becomes a plain 500 message", async () => {
+  const [out] = await run("ff-audit/write-audit.js", {
+    input: [item({ statusCode: 500, body: { code: "57014", message: "canceling statement due to statement timeout" } })],
+    nodes: ctxNodes({}, staff, {
+      "Validate input": [item({ client_id: clientA, customer_id: "1234567890" })],
+      "Get account": [item({ clients: { name: "McCall Gardens" } })],
+    }),
+  });
+  assert.equal(out.json.ok, false);
+  assert.equal(out.json.status, 500);
+  assert.match(out.json.body.error, /statement timeout/);
 });
 
 await test("dataforseo: volumes, Google metrics and related keywords map to one row per key", async () => {
@@ -592,6 +605,368 @@ await test("ghl setup: summary matches created items by name, not position", asy
   assert.deepEqual(out.json.body.created, ["field gbraid", "tag from google ads"]);
   assert.deepEqual(out.json.body.failed, ["field wbraid"]);
   assert.equal(out.json.status, 502);
+});
+
+// ------------------------------------------------------------------ negatives (apply, PDF task 5)
+const negBody = (o = {}) => ({ source: "negatives", source_id: "66666666-6666-4666-8666-666666666666", level: "list", match_type: "PHRASE", terms: ["Free  Cremation", "urns for sale"], ...o });
+
+await test("negatives validate: plain terms pass, names, placeholders and broad match are refused", async () => {
+  const [ok] = await run("ff-apply-campaign-action/validate.js", { nodes: ctxNodes(negBody(), rob) });
+  assert.equal(ok.json.valid, true);
+  assert.deepEqual(ok.json.terms, ["free cremation", "urns for sale"]);
+  for (const [body, re] of [
+    [negBody({ terms: ["[name removed - obituary]"] }), /not a plain search term/],
+    [negBody({ terms: ["john cremation"] }), /person's name/],
+    [negBody({ match_type: "BROAD" }), /PHRASE or EXACT/],
+    [negBody({ level: "account" }), /campaign or list/],
+    [negBody({ terms: [] }), /1 to 50/],
+  ]) {
+    const [out] = await run("ff-apply-campaign-action/validate.js", { nodes: ctxNodes(body, rob) });
+    assert.equal(out.json.valid, false);
+    assert.match(out.json.body.error, re);
+  }
+});
+
+const negCtx = (o = {}) => ({
+  found: true, customer_id: "1234567890", campaign_id: "10", action_status: "proposed", campaign_row_id: "c1",
+  login_customer_id: "9998887777", is_test_account: true, writes_enabled: false, universal_list_id: "77",
+  existing_campaign_negatives: [], existing_list_negatives: ["free cremation|PHRASE"], ...o,
+});
+const negNodes = (body) => ctxNodes({}, rob, { "Validate input": [item({ valid: true, ...body, terms: body.terms.map((t) => t.toLowerCase().replace(/\s+/g, " ")) })] });
+
+await test("negatives plan: list adds shared criteria, skips ones already there; campaign adds negative criteria", async () => {
+  const [list] = await run("ff-apply-campaign-action/plan.js", { input: [item(negCtx())], nodes: negNodes(negBody()) });
+  assert.equal(list.json.ok, true);
+  assert.equal(list.json.url_suffix, "sharedCriteria:mutate");
+  assert.deepEqual(list.json.mutate_body.operations, [{ create: { sharedSet: "customers/1234567890/sharedSets/77", keyword: { text: "urns for sale", matchType: "PHRASE" } } }]);
+  assert.equal(list.json.action.skipped, 1);
+  const [camp] = await run("ff-apply-campaign-action/plan.js", { input: [item(negCtx())], nodes: negNodes(negBody({ level: "campaign", match_type: "EXACT" })) });
+  assert.equal(camp.json.url_suffix, "campaignCriteria:mutate");
+  assert.equal(camp.json.mutate_body.operations.length, 2);
+  assert.deepEqual(camp.json.mutate_body.operations[0].create, { campaign: "customers/1234567890/campaigns/10", negative: true, keyword: { text: "free cremation", matchType: "EXACT" } });
+});
+
+await test("negatives plan: guards - live account without writes, no universal list, nothing new", async () => {
+  for (const [ctx, body, status] of [
+    [negCtx({ is_test_account: false }), negBody(), 403],
+    [negCtx({ universal_list_id: null }), negBody(), 422],
+    [negCtx({ existing_list_negatives: ["free cremation|PHRASE", "urns for sale|PHRASE"] }), negBody(), 409],
+    [{ found: false }, negBody(), 404],
+  ]) {
+    const [out] = await run("ff-apply-campaign-action/plan.js", { input: [item(ctx)], nodes: negNodes(body) });
+    assert.equal(out.json.ok, false);
+    assert.equal(out.json.status, status);
+  }
+});
+
+await test("negatives records: success logs validate + apply and answers with the count", async () => {
+  const nodes = negNodes(negBody());
+  nodes["Plan change"] = await run("ff-apply-campaign-action/plan.js", { input: [item(negCtx())], nodes });
+  nodes["Validate change"] = [item({ statusCode: 200, body: {} })];
+  nodes["Apply change"] = [item({ statusCode: 200, body: { results: [{ resourceName: "x" }] } })];
+  const out = await run("ff-apply-campaign-action/records.js", { nodes });
+  assert.deepEqual(out[0].json.respond, { status: 200, body: { ok: true, added: 1, skipped: 1, level: "list" } });
+  assert.equal(out.length, 1);
+  assert.deepEqual(out[0].json.body.map((l) => [l.operation, l.validate_only]), [["add_negatives", true], ["add_negatives", false]]);
+});
+
+// ------------------------------------------------------------------ case match (PDF task 6)
+const caseBody = (o = {}) => ({
+  action: "check", client_id: clientA, customer_id: "123-456-7890", month: "2026-09",
+  cases: [
+    { case_date: "2026-09-03", gclid: "EAIaIQobChMI_test_gclid_1", value: 4200 },
+    { case_date: "2026-09-10", email: " Jane.Doe@Gmail.com ", phone: "(843) 555-0100" },
+    { case_date: "2026-09-12", phone: "843-555-0101", call_time: "2026-09-08 14:05" },
+    { case_date: "2026-09-20" },
+    { case_date: "2026-08-30", gclid: "EAIaIQobChMI_test_gclid_2" },
+  ],
+  ...o,
+});
+
+await test("case match validate: name columns refuse the list; upload is Rob only", async () => {
+  const [ok] = await run("ff-case-match/validate.js", { nodes: ctxNodes(caseBody(), staff) });
+  assert.equal(ok.json.valid, true);
+  assert.equal(ok.json.customer_id, "1234567890");
+  const [named] = await run("ff-case-match/validate.js", { nodes: ctxNodes(caseBody({ cases: [{ case_date: "2026-09-03", family_name: "x" }] }), staff) });
+  assert.equal(named.json.valid, false);
+  assert.match(named.json.body.error, /not allowed: "family_name"/);
+  const [up] = await run("ff-case-match/validate.js", { nodes: ctxNodes(caseBody({ action: "upload" }), staff) });
+  assert.equal(up.json.status, 403);
+});
+
+const caseCtx = (o = {}) => ({
+  found: true, customer_id: "1234567890", login_customer_id: "9998887777", is_test_account: true, writes_enabled: false,
+  currency_code: "USD", time_zone: "America/New_York", case_value_micros: 3500000000,
+  click_action: { id: "501", name: "FF - Signed case" }, call_action: { id: "502", name: "FF - Signed case call" }, ...o,
+});
+const caseNodes = (body, ctx, earlier = [item({})]) => ctxNodes({}, rob, {
+  "Validate input": [item({ valid: true, ...body, customer_id: "1234567890", again: body.again === true })],
+  "Get case match context": [item(ctx)],
+  "Get earlier uploads": earlier,
+});
+
+await test("case match plan: click, enhanced and call conversions; hashes, offsets, skips", async () => {
+  const [out] = await run("ff-case-match/plan.js", { nodes: caseNodes(caseBody(), caseCtx()) });
+  assert.equal(out.json.ok, true);
+  const click = out.json.uploads.find((u) => u.kind === "click");
+  const call = out.json.uploads.find((u) => u.kind === "call");
+  assert.equal(click.url_suffix, ":uploadClickConversions");
+  assert.equal(click.body.partialFailure, true);
+  assert.equal(click.body.conversions.length, 2);
+  const [c1, c2] = click.body.conversions;
+  assert.equal(c1.gclid, "EAIaIQobChMI_test_gclid_1");
+  assert.equal(c1.conversionAction, "customers/1234567890/conversionActions/501");
+  assert.equal(c1.conversionDateTime, "2026-09-03 12:00:00-04:00");
+  assert.equal(c1.conversionValue, 4200);
+  assert.ok(/^ff-[0-9a-f]{28}$/.test(c1.orderId));
+  // email normalised (trim, lower case, gmail dots removed) then SHA-256; phone to E.164 then SHA-256
+  assert.equal(c2.conversionValue, 3500);
+  assert.equal(c2.userIdentifiers.length, 2);
+  assert.ok(c2.userIdentifiers.every((u) => /^[0-9a-f]{64}$/.test(u.hashedEmail || u.hashedPhoneNumber)));
+  assert.ok(!JSON.stringify(click.body).includes("Jane") && !JSON.stringify(click.body).includes("555-0100"));
+  assert.deepEqual(call.body.conversions[0], {
+    callerId: "+18435550101", callStartDateTime: "2026-09-08 14:05:00-04:00",
+    conversionAction: "customers/1234567890/conversionActions/502", conversionDateTime: "2026-09-12 12:00:00-04:00",
+    conversionValue: 3500, currencyCode: "USD",
+  });
+  assert.deepEqual(out.json.reasons, { "no click id, phone or email": 1, "case_date outside the month": 1 });
+  assert.equal(out.json.counts.skipped, 2);
+});
+
+await test("case match plan: guards - live account, earlier upload, missing conversion action", async () => {
+  const [live] = await run("ff-case-match/plan.js", { nodes: caseNodes(caseBody({ action: "upload" }), caseCtx({ is_test_account: false })) });
+  assert.equal(live.json.status, 403);
+  const [again] = await run("ff-case-match/plan.js", { nodes: caseNodes(caseBody({ action: "upload" }), caseCtx(), [item({ id: "r1", created_at: "2026-10-01T10:00:00Z" })]) });
+  assert.equal(again.json.status, 409);
+  const [checkAgain] = await run("ff-case-match/plan.js", { nodes: caseNodes(caseBody(), caseCtx(), [item({ id: "r1", created_at: "2026-10-01T10:00:00Z" })]) });
+  assert.equal(checkAgain.json.ok, true, "a check run is allowed after an upload");
+  const [noAction] = await run("ff-case-match/plan.js", { nodes: caseNodes(caseBody(), caseCtx({ click_action: null })) });
+  assert.equal(noAction.json.reasons['no "FF - Signed case" conversion action in this account'], 2);
+});
+
+await test("case match records: counts from partial failure, no case data saved, check never uploads", async () => {
+  const nodes = caseNodes(caseBody(), caseCtx());
+  nodes["Plan uploads"] = await run("ff-case-match/plan.js", { nodes });
+  const reqs = nodes["Plan uploads"][0].json.uploads.map((u) => item({ kind: u.kind, sent: u.sent }));
+  nodes["Upload requests"] = reqs;
+  const partial = { statusCode: 200, body: { partialFailureError: { code: 3, message: "x", details: [{ errors: [{ errorCode: { conversionUploadError: "CLICK_NOT_FOUND" }, message: "EAIaIQobChMI_test_gclid_1 not found", location: { fieldPathElements: [{ fieldName: "conversions", index: 0 }] } }] }] }, results: [{}, {}] } };
+  const fine = { statusCode: 200, body: { results: [{}] } };
+  nodes["Check validation"] = await run("ff-case-match/check.js", { input: [item(partial), item(fine)], nodes });
+  assert.equal(nodes["Check validation"][0].json.go, false, "check action never uploads");
+  const out = await run("ff-case-match/records.js", { nodes });
+  const runRow = out.find((o) => o.json.path === "case_match_runs").json.body;
+  assert.equal(runRow.validate_only, true);
+  assert.equal(runRow.accepted, 2);
+  assert.equal(runRow.rejected, 1);
+  assert.equal(runRow.reasons.CLICK_NOT_FOUND, 1);
+  assert.equal(runRow.status, "partial");
+  const saved = JSON.stringify(out.map((o) => o.json.body));
+  for (const leak of ["EAIaIQ", "gmail", "843", "2026-09-03"]) assert.ok(!saved.includes(leak), `saved data must not contain ${leak}`);
+  assert.equal(out[0].json.respond.status, 200);
+});
+
+await test("case match records: Rob's upload after a clean check is logged as a real write", async () => {
+  const body = caseBody({ action: "upload" });
+  const nodes = caseNodes(body, caseCtx());
+  nodes["Plan uploads"] = await run("ff-case-match/plan.js", { nodes });
+  nodes["Upload requests"] = nodes["Plan uploads"][0].json.uploads.map((u) => item({ kind: u.kind, sent: u.sent }));
+  const fine = (n) => item({ statusCode: 200, body: { results: Array(n).fill({}) } });
+  nodes["Check validation"] = await run("ff-case-match/check.js", { input: [fine(2), fine(1)], nodes });
+  assert.equal(nodes["Check validation"][0].json.go, true);
+  nodes["Real upload requests"] = nodes["Upload requests"];
+  nodes["Upload conversions"] = [fine(2), fine(1)];
+  const out = await run("ff-case-match/records.js", { nodes });
+  const runRow = out.find((o) => o.json.path === "case_match_runs").json.body;
+  assert.equal(runRow.validate_only, false);
+  assert.equal(runRow.accepted, 3);
+  const logs = out.find((o) => o.json.path === "write_log").json.body;
+  assert.deepEqual(logs.map((l) => [l.operation, l.validate_only]), [
+    ["upload_click_conversions", true], ["upload_call_conversions", true],
+    ["upload_click_conversions", false], ["upload_call_conversions", false],
+  ]);
+  assert.equal(out[0].json.respond.body.uploaded, true);
+});
+
+// ------------------------------------------------------------------ gaql (PDF task 1, read only)
+await test("gaql validate: one SELECT only, caller details refused, limit bounded", async () => {
+  const [ok] = await run("ff-gaql/validate.js", { nodes: ctxNodes({ customer_id: "123-456-7890", query: "SELECT campaign.name FROM campaign" }, staff) });
+  assert.deepEqual(ok.json, { valid: true, customer_id: "1234567890", query: "SELECT campaign.name FROM campaign", limit: 200 });
+  for (const [body, re] of [
+    [{ customer_id: "1234567890", query: "SELECT a FROM b; SELECT c FROM d" }, /Only one SELECT/],
+    [{ customer_id: "1234567890", query: "DELETE campaign" }, /Only one SELECT/],
+    [{ customer_id: "1234567890", query: "SELECT call_view.caller_area_code FROM call_view" }, /Caller phone/],
+    [{ customer_id: "1234567890", query: "SELECT campaign.name FROM campaign", limit: 5000 }, /limit/],
+    [{ customer_id: "12", query: "SELECT campaign.name FROM campaign" }, /10 digits/],
+  ]) {
+    const [out] = await run("ff-gaql/validate.js", { nodes: ctxNodes(body, staff) });
+    assert.equal(out.json.valid, false);
+    assert.match(out.json.body.error, re);
+  }
+});
+
+await test("gaql shape: search terms are name-filtered, rows capped at the limit", async () => {
+  const answer = JSON.stringify([{ results: [
+    { searchTermView: { searchTerm: "john smith obituary" }, metrics: { clicks: "3" } },
+    { searchTermView: { searchTerm: "cremation cost" }, metrics: { clicks: "9" } },
+    { searchTermView: { searchTerm: "direct cremation" }, metrics: { clicks: "1" } },
+  ] }]);
+  const [out] = await run("ff-gaql/shape.js", {
+    input: [item({ statusCode: 200, body: answer })],
+    nodes: {
+      "Validate input": [item({ customer_id: "1234567890", limit: 2 })],
+      "Get account": [item({ customer_id: "1234567890", descriptive_name: "Pilot", clients: { towns: [], own_brand_terms: [], competitor_terms: [] } })],
+    },
+  });
+  assert.equal(out.json.status, 200);
+  assert.equal(out.json.body.total, 3);
+  assert.equal(out.json.body.returned, 2);
+  assert.equal(out.json.body.truncated, true);
+  assert.equal(out.json.body.rows[0].searchTermView.searchTerm, "[name removed - obituary]");
+  assert.equal(out.json.body.rows[1].searchTermView.searchTerm, "cremation cost");
+  assert.ok(!JSON.stringify(out.json).includes("smith"));
+});
+
+// ------------------------------------------------------------------ call tracking setup (PDF task 2)
+const trackCtx = (t = {}, o = {}) => ({
+  found: true, customer_id: "1234567890", action_status: "proposed", login_customer_id: "9998887777",
+  is_test_account: true, writes_enabled: false,
+  tracking: {
+    client_phone: "843-555-0100", case_value_micros: 3500000000, currency_code: "USD", last_synced_at: "2026-10-05T06:00:00Z",
+    call_reporting_enabled: false, call_conversion_reporting_enabled: false, auto_tagging_enabled: true,
+    call_actions: [],
+    account_call_assets: 0, ...t,
+  },
+  ...o,
+});
+const trackNodes = () => ctxNodes({}, rob, { "Validate input": [item({ valid: true, source: "tracking", source_id: clientA, customer_id: "1234567890" })] });
+
+await test("tracking validate: needs a client id and a 10-digit account", async () => {
+  const [ok] = await run("ff-apply-campaign-action/validate.js", { nodes: ctxNodes({ source: "tracking", source_id: clientA, customer_id: "123-456-7890" }, rob) });
+  assert.deepEqual(ok.json, { valid: true, source: "tracking", source_id: clientA, customer_id: "1234567890" });
+  const [bad] = await run("ff-apply-campaign-action/validate.js", { nodes: ctxNodes({ source: "tracking", source_id: clientA }, rob) });
+  assert.equal(bad.json.valid, false);
+});
+
+await test("tracking plan: turns on call reporting, creates both 90s actions, plans the account call asset", async () => {
+  const [out] = await run("ff-apply-campaign-action/plan.js", { input: [item(trackCtx())], nodes: trackNodes() });
+  assert.equal(out.json.ok, true);
+  const [acct, conv] = out.json.tracking.requests_a;
+  assert.equal(acct.url_suffix, ":mutate");
+  assert.deepEqual(acct.body.operation.update.callReportingSetting, { callReportingEnabled: true, callConversionReportingEnabled: true });
+  assert.equal(conv.url_suffix, "/conversionActions:mutate");
+  assert.deepEqual(conv.op_types, ["AD_CALL", "WEBSITE_CALL"]);
+  for (const op of conv.body.operations) {
+    assert.equal(op.create.phoneCallDurationSeconds, 90);
+    assert.equal(op.create.primaryForGoal, true);
+    assert.equal(op.create.valueSettings.defaultValue, 3500);
+  }
+  assert.deepEqual(conv.body.operations.map((o) => o.create.name), ["Calls from ads 90s+", "Calls from website 90s+"]);
+  assert.equal(out.json.tracking.need_asset, true);
+  assert.equal(out.json.tracking.phone, "(843) 555-0100");
+  assert.equal(out.json.tracking.ad_call_action, null);
+  assert.ok(!JSON.stringify(out.json).toLowerCase().includes("record"), "never sets call recording");
+});
+
+await test("tracking plan: existing 90s actions and asset are left alone; our action at 60s is fixed; guards", async () => {
+  const done = trackCtx({ call_reporting_enabled: true, call_conversion_reporting_enabled: true, account_call_assets: 1,
+    call_actions: [{ id: "5", name: "Calls from ads 90s+", type: "AD_CALL", status: "ENABLED", seconds: 90 }, { id: "6", name: "Calls from website 90s+", type: "WEBSITE_CALL", status: "ENABLED", seconds: 90 }] });
+  const [already] = await run("ff-apply-campaign-action/plan.js", { input: [item(done)], nodes: trackNodes() });
+  assert.equal(already.json.status, 409);
+
+  const fix = trackCtx({ call_reporting_enabled: true, call_conversion_reporting_enabled: true,
+    call_actions: [{ id: "5", name: "Calls from ads 90s+", type: "AD_CALL", status: "ENABLED", seconds: 60 }, { id: "6", name: "Calls from website 90s+", type: "WEBSITE_CALL", status: "ENABLED", seconds: 90 }] });
+  const [fixed] = await run("ff-apply-campaign-action/plan.js", { input: [item(fix)], nodes: trackNodes() });
+  assert.equal(fixed.json.tracking.requests_a.length, 1);
+  assert.deepEqual(fixed.json.tracking.requests_a[0].body.operations[0].update,
+    { resourceName: "customers/1234567890/conversionActions/5", status: "ENABLED", phoneCallDurationSeconds: 90 });
+  assert.equal(fixed.json.tracking.ad_call_action, "customers/1234567890/conversionActions/5");
+
+  for (const [ctx, status] of [
+    [trackCtx({}, { is_test_account: false }), 403],
+    [trackCtx({ client_phone: null }), 422],
+    [trackCtx({ client_phone: null, asset_phone: "+1 843-555-0199" }), null],
+    [trackCtx({ last_synced_at: null }), 409],
+    [{ found: false }, 404],
+  ]) {
+    const [out] = await run("ff-apply-campaign-action/plan.js", { input: [item(ctx)], nodes: trackNodes() });
+    if (status === null) {
+      assert.equal(out.json.tracking.phone, "(843) 555-0199", "falls back to the phone on an existing call asset");
+      continue;
+    }
+    assert.equal(out.json.status, status);
+  }
+});
+
+await test("tracking step B: the call asset uses the action step A just created", async () => {
+  const nodes = trackNodes();
+  nodes["Plan change"] = await run("ff-apply-campaign-action/plan.js", { input: [item(trackCtx())], nodes });
+  const reqs = nodes["Plan change"][0].json.tracking.requests_a;
+  nodes["Tracking: real requests"] = reqs.map((r) => item(r));
+  nodes["Apply tracking"] = [
+    item({ statusCode: 200, body: { resourceName: "customers/1234567890" } }),
+    item({ statusCode: 200, body: { results: [{ resourceName: "customers/1234567890/conversionActions/901" }, { resourceName: "customers/1234567890/conversionActions/902" }] } }),
+  ];
+  const [b] = await run("ff-apply-campaign-action/plan-asset.js", { nodes });
+  assert.equal(b.json.need, true);
+  const [assetOp, linkOp] = b.json.body.mutateOperations;
+  assert.deepEqual(assetOp.assetOperation.create.callAsset, {
+    countryCode: "US", phoneNumber: "(843) 555-0100",
+    callConversionReportingState: "USE_RESOURCE_LEVEL_CALL_CONVERSION_ACTION",
+    callConversionAction: "customers/1234567890/conversionActions/901",
+  });
+  assert.deepEqual(linkOp.customerAssetOperation.create, { asset: "customers/1234567890/assets/-1", fieldType: "CALL" });
+
+  nodes["Apply tracking"][1] = item({ statusCode: 400, body: { error: { message: "bad" } } });
+  const [failed] = await run("ff-apply-campaign-action/plan-asset.js", { nodes });
+  assert.equal(failed.json.need, false);
+  assert.equal(failed.json.failed, true);
+});
+
+await test("tracking records: both steps logged; answer lists the steps", async () => {
+  const nodes = trackNodes();
+  nodes["Plan change"] = await run("ff-apply-campaign-action/plan.js", { input: [item(trackCtx())], nodes });
+  const reqs = nodes["Plan change"][0].json.tracking.requests_a.map((r) => item(r));
+  nodes["Tracking: requests"] = reqs;
+  nodes["Tracking: real requests"] = reqs;
+  const ok = item({ statusCode: 200, body: { results: [{ resourceName: "customers/1234567890/conversionActions/901" }] } });
+  nodes["Validate tracking"] = [ok, ok];
+  nodes["Apply tracking"] = [ok, ok];
+  nodes["Plan call asset"] = [item({ need: true, body: {} })];
+  nodes["Validate call asset"] = [ok];
+  nodes["Apply call asset"] = [ok];
+  const out = await run("ff-apply-campaign-action/records.js", { nodes });
+  assert.equal(out[0].json.respond.status, 200);
+  assert.equal(out[0].json.respond.body.steps.length, 4);
+  const logs = out[0].json.body;
+  assert.deepEqual(logs.map((l) => [l.request.step, l.validate_only]), [
+    ["account", true], ["conversion_actions", true], ["account", false], ["conversion_actions", false],
+    ["call asset", true], ["call asset", false],
+  ]);
+  assert.ok(logs.every((l) => l.operation === "setup_call_tracking"));
+});
+
+await test("tracking plan (real account shape): 10s call actions are set to 90s, no duplicates, no second call asset, Canada", async () => {
+  const real = trackCtx({
+    client_phone: null, asset_phone: "250-483-2559", case_value_micros: null, currency_code: "CAD",
+    call_reporting_enabled: true, call_conversion_reporting_enabled: true, auto_tagging_enabled: true,
+    call_actions: [
+      { id: "273335022", name: "Calls from ADS", type: "AD_CALL", status: "ENABLED", seconds: 10 },
+      { id: "7155638308", name: "Calls from website", type: "WEBSITE_CALL", status: "ENABLED", seconds: 10 },
+    ],
+    account_call_assets: 0, search_campaigns_without_call_asset: 0,
+  }, { writes_enabled: true, is_test_account: false });
+  const [out] = await run("ff-apply-campaign-action/plan.js", { input: [item(real)], nodes: trackNodes() });
+  assert.equal(out.json.ok, true);
+  assert.equal(out.json.tracking.requests_a.length, 1, "account settings already on");
+  const ops = out.json.tracking.requests_a[0].body.operations;
+  assert.ok(ops.every((o) => o.update && !o.create), "existing actions are updated, nothing new is created");
+  assert.deepEqual(ops.map((o) => [o.update.resourceName, o.update.phoneCallDurationSeconds]), [
+    ["customers/1234567890/conversionActions/273335022", 90],
+    ["customers/1234567890/conversionActions/7155638308", 90],
+  ]);
+  assert.equal(out.json.tracking.need_asset, false, "campaigns already show a number");
+  assert.equal(out.json.tracking.country_code, "CA");
+  assert.equal(out.json.tracking.ad_call_action, "customers/1234567890/conversionActions/273335022");
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ", some failed" : ""}`);

@@ -2,7 +2,7 @@
   "name": "ff-geo-target-suggest",
   "nodes": [
     {
-      "id": "93f3ecae-b78e-4fa0-b1b2-e94851c1dc9c",
+      "id": "2743e2fe-9696-4078-9d89-dcad2f0904d8",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -22,7 +22,7 @@
       "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
     },
     {
-      "id": "452e2361-fd3c-4507-97e0-8d43754840b8",
+      "id": "cea2dbec-0ae1-4d49-b981-dccdbc3b3fbc",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -36,7 +36,7 @@
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
     },
     {
-      "id": "11d425cf-d951-4750-aa48-94f849904cf4",
+      "id": "cb823822-4096-4024-a236-61dbd722d2eb",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -50,7 +50,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "707f956f-1cea-4757-8789-d9e8da93c83a",
+      "id": "17de995f-78ec-4e38-afd5-c77ac0c5db64",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -86,7 +86,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "f443855e-aca3-4f25-8428-8f999724d169",
+      "id": "cdb25d5f-c793-4120-b872-28df6d11c25c",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -131,7 +131,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "4b4a1d76-5c96-4ca9-ba3d-d3053fbcb36d",
+      "id": "0fc28c2c-b454-4bbc-8465-73d03ecf7ca4",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -145,7 +145,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "e5ce8616-0eda-4aa2-bf57-55d8d40f2102",
+      "id": "6c953e9d-2bb1-4774-b384-a76b6f38225a",
       "parameters": {
         "conditions": {
           "options": {
@@ -178,7 +178,7 @@
       ]
     },
     {
-      "id": "4ea01b23-dec7-4f66-aa1a-2e3f0f57a645",
+      "id": "c216f929-7300-44ee-8f10-1fa76980ac6f",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -196,7 +196,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "03b318a1-3fc2-4a61-a16e-59005aa01c89",
+      "id": "f8a4adb7-0836-47ae-9161-1a1bf1dae044",
       "name": "Validate input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -209,7 +209,7 @@
       }
     },
     {
-      "id": "3eebc383-eb1a-4087-b565-1c4f7ee51400",
+      "id": "29377029-ce8b-416a-a920-c4601c194949",
       "name": "Validate input ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -226,7 +226,7 @@
           },
           "conditions": [
             {
-              "id": "b2203e04-aba4-4e82-83e5-ddeeab93e209",
+              "id": "3504d2d1-bc24-477b-bc77-6e5928af39c2",
               "leftValue": "={{ $json.valid === true }}",
               "rightValue": true,
               "operator": {
@@ -242,7 +242,7 @@
       }
     },
     {
-      "id": "14381436-fa08-4747-9209-fea59fac9040",
+      "id": "4b1699d8-5b6a-463d-9ca2-bb841d98cbd1",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -259,7 +259,7 @@
       }
     },
     {
-      "id": "aeb08cb1-e1f5-45ea-800e-e6be3c07455d",
+      "id": "2d4c9f21-0475-4311-ad24-bb84f7630dd4",
       "name": "Get Google Ads secrets",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -287,7 +287,7 @@
       "notes": "Developer token, OAuth client id/secret, refresh token and MCC id, entered by Rob on the dashboard Settings page (stored in Supabase private.google_ads_secrets - never readable by the browser)."
     },
     {
-      "id": "e1cb0ac4-3fdd-44bc-a21f-87089e110976",
+      "id": "8b48f52b-1bc9-485b-82c0-4d6ca7bc7e67",
       "name": "Refresh Google token",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -331,7 +331,7 @@
       "notes": "OAuth refresh, same as the reference. Values from 'Get Google Ads secrets'. Test: Execute step - the output must contain access_token."
     },
     {
-      "id": "6ef6fe53-23c4-4b0c-b629-958afa46d4bd",
+      "id": "6cdbbf1c-e369-48c2-a37a-33f430707957",
       "name": "Suggest locations",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -361,7 +361,7 @@
       "notes": "geoTargetConstants:suggest is global - no customer id and no login-customer-id."
     },
     {
-      "id": "172d22e0-01b6-47b0-a876-f2ec425bfa5f",
+      "id": "f77979af-5dbe-4505-ae71-7a68fa51a285",
       "name": "Format suggestions",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,

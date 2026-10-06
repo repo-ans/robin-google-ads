@@ -34,6 +34,28 @@ export type Client = {
   office_hours: { days: string[]; start_hour: number; end_hour: number };
 };
 
+// One case match run (counts only - the case list itself is never stored).
+export type CaseMatchRun = {
+  id: string;
+  client_id: string;
+  customer_id: string;
+  month: string;
+  validate_only: boolean;
+  cases_in: number;
+  skipped: number;
+  sent_click: number;
+  sent_call: number;
+  accepted: number;
+  rejected: number;
+  reasons: Record<string, number>;
+  value_total: number;
+  currency_code: string | null;
+  status: "ok" | "partial" | "failed" | "refused";
+  error: string | null;
+  run_by: string | null;
+  created_at: string;
+};
+
 export type AdAccount = {
   customer_id: string;
   client_id: string | null;
@@ -404,6 +426,12 @@ export const actions = {
     callN8n<{ message?: ChatMessage; ok?: boolean }>("ff/campaign-chat", body),
   applyAction: (source: "chat" | "message", source_id: string) =>
     callN8n<{ ok: true; applied: ProposedAction }>("ff/apply-campaign-action", { source, source_id }),
+  setupCallTracking: (client_id: string, customer_id: string) =>
+    callN8n<{ ok: true; steps: string[]; note: string }>("ff/apply-campaign-action", { source: "tracking", source_id: client_id, customer_id }),
+  addNegatives: (body: { campaign_row_id: string; level: "campaign" | "list"; match_type: "PHRASE" | "EXACT"; terms: string[] }) =>
+    callN8n<{ ok: true; added: number; skipped: number; level: string }>("ff/apply-campaign-action", {
+      source: "negatives", source_id: body.campaign_row_id, level: body.level, match_type: body.match_type, terms: body.terms,
+    }),
 
   postMessage: (body: { client_id: string; body: string; campaign_row_id?: string | null }) =>
     callN8n<{ ok: true; id: string }>("ff/client-message", body),
@@ -419,6 +447,8 @@ export const actions = {
     callN8n<{ suggestions: { resource_name: string; name: string; canonical_name: string; country_code: string | null; target_type: string | null }[] }>(
       "ff/geo-target-suggest", { query, country }),
   build: <T = unknown>(body: Record<string, unknown>) => callN8n<T>("ff/build-campaign", body),
+  caseMatch: (body: { action: "check" | "upload"; client_id: string; customer_id: string; month: string; again: boolean; cases: Record<string, string | undefined>[] }) =>
+    callN8n<{ ok: boolean; uploaded: boolean; cases_in: number; skipped: number; sent: number; accepted: number; rejected: number; reasons: Record<string, number> }>("ff/case-match", body),
   deleteCampaign: (campaign_row_id: string) => callN8n<{ ok: true }>("ff/delete-campaign", { campaign_row_id }),
   googleAdsSettings: (body: { action: "test" } | { action: "save"; values: Record<string, string> } | { action: "exchange_code"; code: string; redirect_uri: string }) =>
     callN8n<{ ok: boolean; message: string }>("ff/google-ads-settings", body),

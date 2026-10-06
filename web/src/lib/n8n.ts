@@ -10,7 +10,7 @@ export class N8nError extends Error {
 
 function messageFor(status: number, serverMessage?: string) {
   if (status === 401) return "Your session has ended. Please sign in again.";
-  if (status === 403) return "Your role does not allow this action.";
+  if (status === 403) return serverMessage || "Your role does not allow this action.";
   if (status === 400) return serverMessage || "The request was not valid.";
   return serverMessage || `The request failed (status ${status}).`;
 }
@@ -59,5 +59,8 @@ export async function callN8n<T = unknown>(path: string, body: unknown = {}): Pr
     throw new N8nError(res.status, messageFor(res.status, serverMessage));
   }
 
+  if (json === null || typeof json !== "object") {
+    throw new N8nError(res.status, "n8n finished without an answer. Open the workflow's last execution in n8n to see which step stopped.");
+  }
   return json as T;
 }

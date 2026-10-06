@@ -2,7 +2,7 @@
   "name": "ff-apply-campaign-action",
   "nodes": [
     {
-      "id": "4076d93c-c074-4f6a-a28f-423af878dab0",
+      "id": "6a39b629-69e4-497a-80df-eb932ff1877a",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -22,7 +22,7 @@
       "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
     },
     {
-      "id": "05de6941-f6ed-45a1-86c9-0305d8c129df",
+      "id": "4d6377d5-98eb-457c-9432-cfa846983970",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -31,12 +31,12 @@
         300
       ],
       "parameters": {
-        "jsCode": "// ff-apply-campaign-action: Confirm & Apply for a proposed budget / pause / resume (reference apply-campaign-action). rob_admin only; test account or writes_enabled; validateOnly first; every attempt logged in write_log.\n// Non-secret settings. Secrets are n8n credentials (see the workflow notes);\n// the Supabase service role key is only in \"FF Supabase (service role)\".\nconst SETTINGS = {\n  \"SUPABASE_URL\": \"https://SET-ME.supabase.co\",\n  \"SUPABASE_ANON_KEY\": \"SET-ME\",\n  \"ALLOWED_ROLES\": [\n    \"rob_admin\"\n  ],\n  \"GOOGLE_ADS_API_VERSION\": \"v25\"\n};\n\nconst src = $input.first().json || {};\nreturn [{ json: { ...SETTINGS, body: src.body && typeof src.body === 'object' ? src.body : {} } }];\n"
+        "jsCode": "// ff-apply-campaign-action: Confirm & Apply for a proposed budget / pause / resume (reference apply-campaign-action), adding negative keywords from the Search Terms tab (campaign or FF Universal Negatives list), and call tracking setup (90s call conversions, call reporting, account call asset). rob_admin only; test account or writes_enabled; validateOnly first; every attempt logged in write_log.\n// Non-secret settings. Secrets are n8n credentials (see the workflow notes);\n// the Supabase service role key is only in \"FF Supabase (service role)\".\nconst SETTINGS = {\n  \"SUPABASE_URL\": \"https://SET-ME.supabase.co\",\n  \"SUPABASE_ANON_KEY\": \"SET-ME\",\n  \"ALLOWED_ROLES\": [\n    \"rob_admin\"\n  ],\n  \"GOOGLE_ADS_API_VERSION\": \"v25\"\n};\n\nconst src = $input.first().json || {};\nreturn [{ json: { ...SETTINGS, body: src.body && typeof src.body === 'object' ? src.body : {} } }];\n"
       },
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
     },
     {
-      "id": "18573ad9-73c4-494a-8500-4da4e9063e80",
+      "id": "1c8e86b3-5f09-4e3d-a35d-7a9ba77d5070",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -50,7 +50,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "08c41a9b-e39f-4c3c-8582-836e70177ac1",
+      "id": "45faa294-4caf-4f60-816a-cb3d7eb05f95",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -86,7 +86,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "3905fde8-a8d7-4c17-8c4c-7125ef6b0286",
+      "id": "d5db167c-a1a5-4a31-9b24-7242790bfa40",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -131,7 +131,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "e55f50d1-243d-4f3d-8bc7-5fadc865589e",
+      "id": "420a33f5-e366-404d-a8eb-bccf8fc9c06b",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -145,7 +145,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "afb3f8db-41f6-46ed-a1f8-9c0dbf983f7e",
+      "id": "f398f5cc-5bad-4994-8700-c03e25536c96",
       "parameters": {
         "conditions": {
           "options": {
@@ -178,7 +178,7 @@
       ]
     },
     {
-      "id": "ac00a978-0c5a-47e2-88e0-8a1b0eb24bfe",
+      "id": "4865db37-fc93-4e7d-bff7-74a8570c3dec",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -196,7 +196,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "4026b664-7320-4d35-bd0f-064b2d5d30c6",
+      "id": "bcfd1434-392d-4888-90ef-66c86d3b2103",
       "name": "Validate input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -205,11 +205,11 @@
         200
       ],
       "parameters": {
-        "jsCode": "// ---- shared/input.js (included by scripts/build-n8n.mjs) -------------------\n// Webhook input helpers. The caller always comes from the Auth check block,\n// never from the request body.\nconst UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst CUSTOMER_RE = /^[0-9]{10}$/;\nconst ZERO_UUID = '00000000-0000-0000-0000-000000000000';\n\nconst requestBody = () => {\n  const b = $('Config').first().json.body;\n  return b && typeof b === 'object' ? b : {};\n};\nconst caller = () => $('Auth: check role').first().json.user;\nconst isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);\nconst customerId = (v) => {\n  const d = String(v === undefined || v === null ? '' : v).replace(/-/g, '');\n  return CUSTOMER_RE.test(d) ? d : null;\n};\nconst text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');\n\n// Every \"result\" item carries { status, body } for the generic Respond node.\nconst reject = (status, error) => [{ json: { valid: false, status, body: { error } } }];\nconst reply = (status, body) => [{ json: { status, body } }];\n// ---- end shared/input.js ----------------------------------------------------\n\n// Body: { source: \"chat\" | \"message\", source_id }\n// Only the row id comes from the browser. The action itself is read from the\n// database (the reference trusted the browser's copy of proposed_action).\nconst b = requestBody();\nif (!['chat', 'message'].includes(b.source)) return reject(400, 'source must be chat or message.');\nif (!isUuid(b.source_id)) return reject(400, 'source_id is missing or not valid.');\nreturn [{ json: { valid: true, source: b.source, source_id: b.source_id } }];\n"
+        "jsCode": "// ---- shared/input.js (included by scripts/build-n8n.mjs) -------------------\n// Webhook input helpers. The caller always comes from the Auth check block,\n// never from the request body.\nconst UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst CUSTOMER_RE = /^[0-9]{10}$/;\nconst ZERO_UUID = '00000000-0000-0000-0000-000000000000';\n\nconst requestBody = () => {\n  const b = $('Config').first().json.body;\n  return b && typeof b === 'object' ? b : {};\n};\nconst caller = () => $('Auth: check role').first().json.user;\nconst isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);\nconst customerId = (v) => {\n  const d = String(v === undefined || v === null ? '' : v).replace(/-/g, '');\n  return CUSTOMER_RE.test(d) ? d : null;\n};\nconst text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');\n\n// Every \"result\" item carries { status, body } for the generic Respond node.\nconst reject = (status, error) => [{ json: { valid: false, status, body: { error } } }];\nconst reply = (status, body) => [{ json: { status, body } }];\n// ---- end shared/input.js ----------------------------------------------------\n\n// ---- shared/names.js (included by scripts/build-n8n.mjs) ------------------\n// Hard rule 4: no family or deceased names in columns, logs or AI prompts.\n// PLAN.md 5.4 - the exact rules still need Rob's sign-off.\n//\n// makeNameFilters(extraAllowPhrases) returns:\n//   filterTerm(raw)   -> { stored, filtered } for search terms: a name-bearing\n//                        term becomes \"[name removed - <intent>]\"\n//   redactNames(text) -> free text (messages, chat) with name words replaced\n//                        by \"[name]\"\n// A term is name-bearing when it has an obituary/death-notice phrase, a common\n// first name that is not an allowed word, or a common surname with no\n// funeral-business word next to it (\"smith funeral home\" is a business and is\n// kept; \"john smith\" is not). Removing a harmless word is the safe direction.\n\nconst NAME_INTENT = [\n  ['obituary', 'obituary'], ['obituaries', 'obituary'], ['obit', 'obituary'], ['obits', 'obituary'],\n  ['passed away', 'death notice'], ['death notice', 'death notice'], ['death notices', 'death notice'],\n  ['in loving memory', 'memorial'], ['celebration of life for', 'memorial'], ['memorial for', 'memorial'],\n  ['service for', 'service'], ['services for', 'service'], ['visitation for', 'service'], ['funeral for', 'service'],\n  ['condolences', 'obituary'], ['guestbook', 'obituary'], ['guest book', 'obituary'],\n];\nconst FIRST_NAMES = new Set(('james john robert michael william david richard joseph thomas charles christopher daniel matthew anthony ' +\n  'donald steven paul andrew joshua kenneth kevin brian george timothy ronald edward jason jeffrey ryan jacob gary nicholas eric ' +\n  'jonathan stephen larry justin scott brandon benjamin samuel gregory alexander frank patrick raymond dennis tyler aaron jose adam ' +\n  'nathan henry douglas zachary peter kyle ethan walter noah jeremy christian keith roger terry gerald harold sean austin carl arthur ' +\n  'lawrence dylan jesse jordan bryan billy joe bruce gabriel logan albert willie alan juan wayne elijah randy roy vincent ralph eugene ' +\n  'russell bobby louis philip johnny howard fred earl jimmy leonard stanley norman lloyd clarence herbert ernest melvin francis ' +\n  'mary patricia jennifer linda elizabeth barbara susan jessica sarah karen lisa nancy betty margaret sandra ashley kimberly emily donna ' +\n  'michelle carol amanda dorothy melissa deborah stephanie rebecca sharon laura cynthia kathleen amy angela shirley anna brenda pamela ' +\n  'emma nicole helen samantha katherine christine debra rachel carolyn janet catherine maria heather diane julie joyce victoria kelly ' +\n  'christina lauren joan evelyn olivia judith megan cheryl martha andrea frances hannah jacqueline gloria teresa kathryn sara janice ' +\n  'jean alice madison doris abigail julia judy beverly denise marilyn danielle theresa sophia marie diana brittany natalie isabella ' +\n  'charlotte irene alexis kayla lori tiffany gladys wanda mildred dolores edna ethel lillian thelma bernice norma florence ' +\n  'eleanor agnes louise ruth anne annie marjorie esther virginia phyllis lois geraldine loretta darlene connie peggy ' +\n  'mohammed muhammad ahmed ali fatima priya raj wei li chen nguyen').split(/\\s+/));\nconst SURNAMES = new Set(('smith johnson williams jones garcia miller davis rodriguez martinez hernandez lopez gonzalez wilson anderson ' +\n  'thomas taylor moore jackson martin lee perez thompson harris sanchez clark ramirez lewis robinson walker allen wright scott torres ' +\n  'nguyen flores adams nelson baker hall rivera campbell mitchell carter roberts gomez phillips evans turner diaz parker cruz edwards ' +\n  'collins reyes stewart morris morales murphy cook rogers gutierrez ortiz morgan cooper peterson bailey reed kelly howard ramos kim ' +\n  'cox ward richardson watson brooks chavez wood james bennett gray mendoza ruiz hughes alvarez castillo sanders patel myers long ross ' +\n  'foster jimenez powell jenkins perry russell sullivan bell coleman butler henderson barnes gonzales fisher vasquez simmons romero ' +\n  'jordan patterson alexander hamilton graham reynolds griffin wallace moreno west cole hayes bryant herrera gibson ellis tran medina ' +\n  'aguilar stevens murray ford castro marshall owens harrison fernandez mcdonald woods washington kennedy wells vargas henry chen ' +\n  'freeman webb tucker guzman burns crawford olson simpson porter hunter gordon mendez silva shaw snyder mason dixon munoz hunt hicks ' +\n  'holmes palmer wagner black robertson boyd rose stone salazar fox warren mills meyer rice schmidt garza daniels ferguson nichols ' +\n  'stephens soto weaver ryan gardner payne grant dunn kelley spencer hawkins arnold pierce hansen peters santos hart bradley knight ' +\n  'elliott cunningham duncan armstrong hudson carroll lane riley andrews ray berry perkins hoffman johnston matthews pena richards ' +\n  'willis carpenter lawrence sandoval').split(/\\s+/));\n// Words that are also names but common in funeral searches, or are places.\nconst NAME_ALLOW = new Set(('home homes funeral funerals cremation cremations crematory crematorium mortuary chapel chapels cemetery ' +\n  'burial burials memorial memorials service services casket caskets urn urns direct cost costs price prices near me the and of for ' +\n  'in with how much what is a to plan plans preplan pre planning prepaid prearranged arrangements cheap affordable best top local ' +\n  'grace hope faith joy rose may june april august summer dawn lily ivy pearl ruby crystal amber holly will mark long hall bell stone ' +\n  'wood woods hill park ward west north south east wells love price cook church king young green white brown black gray grey rice ' +\n  'lane grant hunt fox shaw reed bailey mason hunter parker cooper carter brooks gardner ford washington jordan virginia ' +\n  'florence charlotte victoria madison austin eugene lawrence augusta marshall franklin lincoln jackson hamilton warren').split(/\\s+/));\nconst NAME_BUSINESS = new Set('funeral funerals home homes mortuary chapel chapels cremation cremations crematory crematorium cemetery memorial'.split(' '));\n\nfunction makeNameFilters(extraAllowPhrases) {\n  const extra = new Set();\n  for (const phrase of extraAllowPhrases || []) {\n    for (const w of String(phrase).toLowerCase().split(/[^a-z0-9']+/)) if (w) extra.add(w);\n  }\n  const allowed = (w) => NAME_ALLOW.has(w) || extra.has(w);\n  // \"smith's\" / \"smiths'\" -> \"smith\", so possessives do not slip through.\n  const base = (w) => w.replace(/'s$|'$/, '');\n  const isName = (w) => (FIRST_NAMES.has(base(w)) || SURNAMES.has(base(w))) && !allowed(base(w));\n\n  function filterTerm(raw) {\n    const term = String(raw || '').toLowerCase().replace(/\\s+/g, ' ').trim();\n    for (const [phrase, intent] of NAME_INTENT) {\n      if (` ${term} `.includes(` ${phrase} `)) return { stored: `[name removed - ${intent}]`, filtered: true };\n    }\n    const words = term.split(/[^a-z0-9']+/).filter(Boolean);\n    const hasBusiness = words.some((w) => NAME_BUSINESS.has(w));\n    if (words.some((w) => FIRST_NAMES.has(base(w)) && !allowed(base(w)))) return { stored: '[name removed - name]', filtered: true };\n    if (!hasBusiness && words.some((w) => SURNAMES.has(base(w)) && !allowed(base(w)))) return { stored: '[name removed - name]', filtered: true };\n    return { stored: term, filtered: false };\n  }\n\n  function redactNames(text) {\n    return String(text || '').replace(/[A-Za-z][A-Za-z']*/g, (word) => (isName(word.toLowerCase()) ? '[name]' : word));\n  }\n\n  return { filterTerm, redactNames };\n}\n// ---- end shared/names.js ----------------------------------------------------\n\n// Body, one of:\n//   { source: \"chat\" | \"message\", source_id }\n//       Confirm & Apply for a proposed budget / pause / resume. Only the row id\n//       comes from the browser; the action itself is read from the database\n//       (the reference trusted the browser's copy of proposed_action).\n//   { source: \"negatives\", source_id: <campaigns.id>, level: \"campaign\" | \"list\",\n//     match_type: \"PHRASE\" | \"EXACT\", terms: [\"free cremation\", ...] }\n//       Add negative keywords from the Search Terms tab (PDF task 5), either to\n//       the campaign or to the account's \"FF Universal Negatives\" list.\n//   { source: \"tracking\", source_id: <clients.id>, customer_id }\n//       Set up call tracking (90s+) for one account of the client (PDF task 2).\nconst b = requestBody();\nif (!['chat', 'message', 'negatives', 'tracking'].includes(b.source)) return reject(400, 'source must be chat, message, negatives or tracking.');\nif (!isUuid(b.source_id)) return reject(400, 'source_id is missing or not valid.');\nif (b.source === 'tracking') {\n  const cid = customerId(b.customer_id);\n  if (!cid) return reject(400, 'customer_id must be 10 digits.');\n  return [{ json: { valid: true, source: 'tracking', source_id: b.source_id, customer_id: cid } }];\n}\nif (b.source !== 'negatives') return [{ json: { valid: true, source: b.source, source_id: b.source_id } }];\n\nif (!['campaign', 'list'].includes(b.level)) return reject(400, 'level must be campaign or list.');\nif (!['PHRASE', 'EXACT'].includes(b.match_type)) return reject(400, 'match_type must be PHRASE or EXACT. Broad negatives are not used.');\nif (!Array.isArray(b.terms) || b.terms.length === 0 || b.terms.length > 50) return reject(400, 'Send 1 to 50 terms.');\n\n// Hard rule 4: a negative keyword is written to Google Ads, write_log and the\n// negatives table, so a term that looks like a person's name is refused.\nconst { filterTerm } = makeNameFilters([]);\nconst terms = [];\nfor (const raw of b.terms) {\n  const t = String(raw === undefined || raw === null ? '' : raw).toLowerCase().replace(/\\s+/g, ' ').trim();\n  // \"[name removed - ...]\" placeholders, and anything that is not plain words, are refused.\n  if (!t || t.length > 80 || !/^[a-z0-9][a-z0-9 '&.-]*$/.test(t)) return reject(400, `\"${String(raw).slice(0, 40)}\" is not a plain search term.`);\n  if (filterTerm(t).filtered) return reject(400, `\"${t.slice(0, 40)}\" looks like it holds a person's name, so it cannot be used as a negative keyword.`);\n  if (t.split(' ').length > 10) return reject(400, 'A negative keyword can have at most 10 words.');\n  if (!terms.includes(t)) terms.push(t);\n}\nreturn [{ json: { valid: true, source: 'negatives', source_id: b.source_id, level: b.level, match_type: b.match_type, terms } }];\n"
       }
     },
     {
-      "id": "8d40a581-4a34-4796-a75d-d8a5cf1bf525",
+      "id": "1d4b3069-a610-45b4-9c17-04f6a417b006",
       "name": "Validate input ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -226,7 +226,7 @@
           },
           "conditions": [
             {
-              "id": "76d38081-c165-4c68-8df2-f2135c457c3a",
+              "id": "39390c25-e41d-4583-b63e-9ae52469d6a4",
               "leftValue": "={{ $json.valid === true }}",
               "rightValue": true,
               "operator": {
@@ -242,7 +242,7 @@
       }
     },
     {
-      "id": "0d673898-af4b-49b4-9a1b-1d1933eb31d5",
+      "id": "e35595f1-c291-4366-b85e-acc881bc2312",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -259,7 +259,7 @@
       }
     },
     {
-      "id": "d855db74-a4eb-4892-a266-c332003904f9",
+      "id": "8e1b0bd8-842a-4b22-8cbc-452e4b5893b7",
       "name": "Get action context",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -274,7 +274,7 @@
         "nodeCredentialType": "supabaseApi",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ p_source: $json.source, p_source_id: $json.source_id }) }}",
+        "jsonBody": "={{ JSON.stringify({ p_source: $json.source, p_source_id: $json.source_id, p_customer_id: $json.customer_id || null }) }}",
         "options": {}
       },
       "credentials": {
@@ -285,7 +285,7 @@
       }
     },
     {
-      "id": "8c8c7a90-e6a4-4a16-bfac-dbf7580a8093",
+      "id": "d834ffa2-e6b5-4062-9412-5123f4c423f5",
       "name": "Plan change",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -294,11 +294,11 @@
         200
       ],
       "parameters": {
-        "jsCode": "// ---- shared/ai.js (included by scripts/build-n8n.mjs) ----------------------\n// Checks and cleans what the AI returns before it is stored.\n\nconst ACTION_TYPES = ['update_daily_budget', 'pause_campaign', 'resume_campaign'];\n\n// Hard rule 6: calm tone, plain hyphens, no emoji.\nfunction cleanText(text) {\n  return String(text || '')\n    .replace(/[‒-―−]/g, '-')\n    .replace(/[‘’]/g, \"'\")\n    .replace(/[“”]/g, '\"')\n    .replace(/\\p{Extended_Pictographic}️?/gu, '')\n    .replace(/[ \\t]+\\n/g, '\\n')\n    .trim();\n}\n\n// Only the three reference action types survive; anything else becomes null.\n// daily_budget is in the account currency.\nfunction normalizeAction(a) {\n  if (!a || typeof a !== 'object' || !ACTION_TYPES.includes(a.action_type)) return null;\n  const out = { action_type: a.action_type, daily_budget: null, reason: cleanText(a.reason || '').slice(0, 300) };\n  if (a.action_type === 'update_daily_budget') {\n    const n = Number(a.daily_budget);\n    if (!(n > 0 && n < 100000)) return null;\n    out.daily_budget = Math.round(n * 100) / 100;\n  }\n  return out;\n}\n\nconst money = (micros) => Math.round(Number(micros || 0) / 1e4) / 100;\nconst pct = (v) => (v === null || v === undefined ? 'n/a' : `${Math.round(Number(v) * 100)}%`);\n// ---- end shared/ai.js -------------------------------------------------------\n\n// Builds the Google Ads change for a proposed action, after the guards:\n//   - the action is still \"proposed\" (applied or dismissed ones cannot run twice)\n//   - write gate: the account is a Google Ads test account, or rob_admin has\n//     turned writes on for this client (Rob's SOP: test account first)\n//   - a shared budget is never changed from one campaign\n//   - pause only an enabled campaign, resume only a paused one\n// Output { ok: false, status, error } stops here; the refusal is logged.\nconst cfg = $('Config').first().json;\nconst v = $('Validate input').first().json;\nconst ctx = $input.first().json || {};\n\nconst refuse = (status, error) => [{ json: { ok: false, status, error, ctx } }];\n\nif (!ctx.found) return refuse(404, 'That proposed change was not found.');\nif (ctx.action_status !== 'proposed') return refuse(409, `This change is already ${ctx.action_status || 'closed'}.`);\nconst action = normalizeAction(ctx.proposed_action);\nif (!action) return refuse(422, 'The proposed change is not one of the supported actions.');\nif (!ctx.campaign_row_id) return refuse(404, 'The campaign is no longer in the dashboard.');\nif (!ctx.is_test_account && !ctx.writes_enabled) {\n  return refuse(403, 'Writes are not turned on for this client yet. Test on the Google Ads test account first, then Rob can turn writes on in the client settings.');\n}\n\nconst cid = ctx.customer_id;\nlet urlSuffix;\nlet operation;\nlet campaignPatch;\nif (action.action_type === 'update_daily_budget') {\n  if (!ctx.budget_id) return refuse(422, 'This campaign has no budget on file. Run a sync first.');\n  if (ctx.budget_shared) return refuse(422, 'This campaign uses a shared budget. Change it in Google Ads so other campaigns are not affected by surprise.');\n  const micros = Math.round(action.daily_budget * 1e6);\n  urlSuffix = 'campaignBudgets:mutate';\n  operation = {\n    update: { resourceName: `customers/${cid}/campaignBudgets/${ctx.budget_id}`, amountMicros: String(micros) },\n    updateMask: 'amountMicros',\n  };\n  campaignPatch = { budget_micros: micros };\n} else {\n  const target = action.action_type === 'pause_campaign' ? 'PAUSED' : 'ENABLED';\n  if (action.action_type === 'pause_campaign' && ctx.campaign_status !== 'ENABLED') return refuse(409, 'The campaign is not running.');\n  if (action.action_type === 'resume_campaign' && ctx.campaign_status !== 'PAUSED') return refuse(409, 'The campaign is not paused.');\n  urlSuffix = 'campaigns:mutate';\n  operation = {\n    update: { resourceName: `customers/${cid}/campaigns/${ctx.campaign_id}`, status: target },\n    updateMask: 'status',\n  };\n  campaignPatch = { status: target };\n}\n\nreturn [{\n  json: {\n    ok: true,\n    ctx,\n    action,\n    customer_id: cid,\n    login_customer_id: ctx.login_customer_id || null,\n    api_version: cfg.GOOGLE_ADS_API_VERSION,\n    url_suffix: urlSuffix,\n    mutate_body: { operations: [operation] },\n    campaign_patch: campaignPatch,\n    source: v.source,\n    source_id: v.source_id,\n  },\n}];\n"
+        "jsCode": "// ---- shared/ai.js (included by scripts/build-n8n.mjs) ----------------------\n// Checks and cleans what the AI returns before it is stored.\n\nconst ACTION_TYPES = ['update_daily_budget', 'pause_campaign', 'resume_campaign'];\n\n// Hard rule 6: calm tone, plain hyphens, no emoji.\nfunction cleanText(text) {\n  return String(text || '')\n    .replace(/[‒-―−]/g, '-')\n    .replace(/[‘’]/g, \"'\")\n    .replace(/[“”]/g, '\"')\n    .replace(/\\p{Extended_Pictographic}️?/gu, '')\n    .replace(/[ \\t]+\\n/g, '\\n')\n    .trim();\n}\n\n// Only the three reference action types survive; anything else becomes null.\n// daily_budget is in the account currency.\nfunction normalizeAction(a) {\n  if (!a || typeof a !== 'object' || !ACTION_TYPES.includes(a.action_type)) return null;\n  const out = { action_type: a.action_type, daily_budget: null, reason: cleanText(a.reason || '').slice(0, 300) };\n  if (a.action_type === 'update_daily_budget') {\n    const n = Number(a.daily_budget);\n    if (!(n > 0 && n < 100000)) return null;\n    out.daily_budget = Math.round(n * 100) / 100;\n  }\n  return out;\n}\n\nconst money = (micros) => Math.round(Number(micros || 0) / 1e4) / 100;\nconst pct = (v) => (v === null || v === undefined ? 'n/a' : `${Math.round(Number(v) * 100)}%`);\n// ---- end shared/ai.js -------------------------------------------------------\n\n// Builds the Google Ads change for a proposed action, after the guards:\n//   - the action is still \"proposed\" (applied or dismissed ones cannot run twice)\n//   - write gate: the account is a Google Ads test account, or rob_admin has\n//     turned writes on for this client (Rob's SOP: test account first)\n//   - a shared budget is never changed from one campaign\n//   - pause only an enabled campaign, resume only a paused one\n// Output { ok: false, status, error } stops here; the refusal is logged.\nconst cfg = $('Config').first().json;\nconst v = $('Validate input').first().json;\nconst ctx = $input.first().json || {};\n\nconst refuse = (status, error) => [{ json: { ok: false, status, error, ctx } }];\n\nif (!ctx.found) return refuse(404, v.source === 'negatives' ? 'That campaign was not found.' : 'That proposed change was not found.');\n\n// ---- Negative keywords from the Search Terms tab (PDF task 5)\nif (v.source === 'negatives') {\n  if (!ctx.is_test_account && !ctx.writes_enabled) {\n    return refuse(403, 'Writes are not turned on for this client yet. Test on the Google Ads test account first, then Rob can turn writes on in the client settings.');\n  }\n  const cid = ctx.customer_id;\n  const toList = v.level === 'list';\n  if (toList && !ctx.universal_list_id) {\n    return refuse(422, 'This account has no \"FF Universal Negatives\" list yet. Build a campaign with the campaign builder (it creates the list), or add to the campaign instead.');\n  }\n  const norm = (t) => String(t).toLowerCase().replace(/\\s+/g, ' ').trim();\n  const existing = new Set(toList ? ctx.existing_list_negatives || [] : ctx.existing_campaign_negatives || []);\n  const fresh = v.terms.filter((t) => !existing.has(`${norm(t)}|${v.match_type}`));\n  const skipped = v.terms.length - fresh.length;\n  if (fresh.length === 0) return refuse(409, 'All of these are already negative keywords there.');\n  const keyword = (t) => ({ text: t, matchType: v.match_type });\n  const operations = toList\n    ? fresh.map((t) => ({ create: { sharedSet: `customers/${cid}/sharedSets/${ctx.universal_list_id}`, keyword: keyword(t) } }))\n    : fresh.map((t) => ({ create: { campaign: `customers/${cid}/campaigns/${ctx.campaign_id}`, negative: true, keyword: keyword(t) } }));\n  return [{\n    json: {\n      ok: true,\n      ctx,\n      action: { action_type: 'add_negatives', level: v.level, match_type: v.match_type, terms: fresh, skipped },\n      customer_id: cid,\n      login_customer_id: ctx.login_customer_id || null,\n      api_version: cfg.GOOGLE_ADS_API_VERSION,\n      url_suffix: toList ? 'sharedCriteria:mutate' : 'campaignCriteria:mutate',\n      mutate_body: { operations },\n      campaign_patch: null,\n      source: v.source,\n      source_id: v.source_id,\n    },\n  }];\n}\n\n// ---- Call tracking setup for one account (PDF task 2), any client, one click by Rob\n// Step A (this plan): account settings + the two 90-second call conversion actions.\n// Step B (\"Plan call asset\", after step A is applied): an account-level call asset\n// with the business number, counted by \"Calls from ads 90s+\". Account level means\n// every campaign shows it, including campaigns built later.\nif (v.source === 'tracking') {\n  if (!ctx.is_test_account && !ctx.writes_enabled) {\n    return refuse(403, 'Writes are not turned on for this client yet. Test on the Google Ads test account first, then Rob can turn writes on in the client settings.');\n  }\n  const t = ctx.tracking || {};\n  const cid = ctx.customer_id;\n  if (!t.last_synced_at) return refuse(409, 'Sync this account first, so the current settings are known.');\n\n  const digits = String(t.client_phone || t.asset_phone || '').replace(/\\D/g, '');\n  const national = digits.length === 11 && digits[0] === '1' ? digits.slice(1) : digits;\n  const phone = national.length === 10 ? `(${national.slice(0, 3)}) ${national.slice(3, 6)}-${national.slice(6)}` : null;\n  // A call asset is needed only when no account-level one exists and some enabled\n  // search campaign has none of its own (campaign-level assets already count).\n  const needAsset = !Number(t.account_call_assets) && Number(t.search_campaigns_without_call_asset ?? 1) > 0;\n  // Business numbers here are US or Canada; the account currency tells them apart.\n  const countryCode = t.currency_code === 'CAD' ? 'CA' : 'US';\n  if (needAsset && !phone) return refuse(422, 'No business phone found - add the funeral home\\'s number (US or Canada, 10 digits) under Edit client > Business phone.');\n\n  const steps = [];\n  const requestsA = [];\n  if (!t.call_reporting_enabled || !t.call_conversion_reporting_enabled || !t.auto_tagging_enabled) {\n    requestsA.push({\n      label: 'account',\n      url_suffix: ':mutate',\n      body: {\n        operation: {\n          update: {\n            resourceName: `customers/${cid}`,\n            autoTaggingEnabled: true,\n            callReportingSetting: { callReportingEnabled: true, callConversionReportingEnabled: true },\n          },\n          updateMask: 'autoTaggingEnabled,callReportingSetting.callReportingEnabled,callReportingSetting.callConversionReportingEnabled',\n        },\n      },\n    });\n    steps.push('Call reporting and auto-tagging turned on');\n  }\n\n  const actions = t.call_actions || [];\n  const value = t.case_value_micros ? Number(t.case_value_micros) / 1e6 : null;\n  const ops = [];\n  const opTypes = [];\n  let adCallAction = null;\n  for (const [type, name] of [['AD_CALL', 'Calls from ads 90s+'], ['WEBSITE_CALL', 'Calls from website 90s+']]) {\n    const good = actions.find((a) => a.type === type && a.status === 'ENABLED' && Number(a.seconds) === 90);\n    if (good) {\n      if (type === 'AD_CALL') adCallAction = `customers/${cid}/conversionActions/${good.id}`;\n      continue;\n    }\n    // The account already counts this kind of call (often at a shorter length):\n    // set those actions to 90 seconds instead of adding a second action, so one\n    // call is never counted twice.\n    const existing = actions.filter((a) => a.type === type && a.status === 'ENABLED');\n    const ours = actions.find((a) => a.type === type && a.name === name);\n    const toFix = existing.length ? existing : ours ? [ours] : [];\n    if (toFix.length) {\n      for (const a of toFix) {\n        ops.push({\n          update: { resourceName: `customers/${cid}/conversionActions/${a.id}`, status: 'ENABLED', phoneCallDurationSeconds: 90 },\n          updateMask: 'status,phoneCallDurationSeconds',\n        });\n        opTypes.push(type);\n        steps.push(`\"${a.name}\" now counts calls of 90 seconds or more (was ${a.seconds ?? 'the default'})`);\n      }\n      if (type === 'AD_CALL') adCallAction = `customers/${cid}/conversionActions/${toFix[0].id}`;\n      continue;\n    }\n    ops.push({\n      create: {\n        name, type, category: 'PHONE_CALL_LEAD', status: 'ENABLED', primaryForGoal: true,\n        countingType: 'ONE_PER_CLICK', phoneCallDurationSeconds: 90,\n        ...(value ? { valueSettings: { defaultValue: value, alwaysUseDefaultValue: true, ...(t.currency_code ? { defaultCurrencyCode: t.currency_code } : {}) } } : {}),\n      },\n    });\n    opTypes.push(type);\n    steps.push(`\"${name}\" created (90 seconds, primary)`);\n  }\n  if (ops.length) requestsA.push({ label: 'conversion_actions', url_suffix: '/conversionActions:mutate', op_types: opTypes, body: { operations: ops } });\n  if (needAsset) steps.push(`Call asset ${phone} added to the whole account (every campaign shows it)`);\n\n  if (!requestsA.length && !needAsset) return refuse(409, 'Call tracking is already set up for this account.');\n\n  return [{\n    json: {\n      ok: true,\n      ctx,\n      action: { action_type: 'setup_call_tracking', steps },\n      customer_id: cid,\n      login_customer_id: ctx.login_customer_id || null,\n      api_version: cfg.GOOGLE_ADS_API_VERSION,\n      mutate_body: { steps },\n      campaign_patch: null,\n      source: v.source,\n      source_id: v.source_id,\n      tracking: { requests_a: requestsA, ad_call_action: adCallAction, need_asset: needAsset, phone, country_code: countryCode },\n    },\n  }];\n}\n\nif (ctx.action_status !== 'proposed') return refuse(409, `This change is already ${ctx.action_status || 'closed'}.`);\nconst action = normalizeAction(ctx.proposed_action);\nif (!action) return refuse(422, 'The proposed change is not one of the supported actions.');\nif (!ctx.campaign_row_id) return refuse(404, 'The campaign is no longer in the dashboard.');\nif (!ctx.is_test_account && !ctx.writes_enabled) {\n  return refuse(403, 'Writes are not turned on for this client yet. Test on the Google Ads test account first, then Rob can turn writes on in the client settings.');\n}\n\nconst cid = ctx.customer_id;\nlet urlSuffix;\nlet operation;\nlet campaignPatch;\nif (action.action_type === 'update_daily_budget') {\n  if (!ctx.budget_id) return refuse(422, 'This campaign has no budget on file. Run a sync first.');\n  if (ctx.budget_shared) return refuse(422, 'This campaign uses a shared budget. Change it in Google Ads so other campaigns are not affected by surprise.');\n  const micros = Math.round(action.daily_budget * 1e6);\n  urlSuffix = 'campaignBudgets:mutate';\n  operation = {\n    update: { resourceName: `customers/${cid}/campaignBudgets/${ctx.budget_id}`, amountMicros: String(micros) },\n    updateMask: 'amountMicros',\n  };\n  campaignPatch = { budget_micros: micros };\n} else {\n  const target = action.action_type === 'pause_campaign' ? 'PAUSED' : 'ENABLED';\n  if (action.action_type === 'pause_campaign' && ctx.campaign_status !== 'ENABLED') return refuse(409, 'The campaign is not running.');\n  if (action.action_type === 'resume_campaign' && ctx.campaign_status !== 'PAUSED') return refuse(409, 'The campaign is not paused.');\n  urlSuffix = 'campaigns:mutate';\n  operation = {\n    update: { resourceName: `customers/${cid}/campaigns/${ctx.campaign_id}`, status: target },\n    updateMask: 'status',\n  };\n  campaignPatch = { status: target };\n}\n\nreturn [{\n  json: {\n    ok: true,\n    ctx,\n    action,\n    customer_id: cid,\n    login_customer_id: ctx.login_customer_id || null,\n    api_version: cfg.GOOGLE_ADS_API_VERSION,\n    url_suffix: urlSuffix,\n    mutate_body: { operations: [operation] },\n    campaign_patch: campaignPatch,\n    source: v.source,\n    source_id: v.source_id,\n  },\n}];\n"
       }
     },
     {
-      "id": "8899731b-11be-40e4-8f18-4b61c8efc686",
+      "id": "a38ae701-0291-4524-8820-4aafe02c3bf9",
       "name": "Allowed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -315,7 +315,7 @@
           },
           "conditions": [
             {
-              "id": "6b37decd-9b0d-46e6-b3c5-934a30bb1ccc",
+              "id": "f0e7a05b-87e5-4752-af4b-59bc9a121adb",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -331,7 +331,7 @@
       }
     },
     {
-      "id": "ce97432d-7ac3-40cf-8b0b-a2f078c059c9",
+      "id": "2b342471-f459-4dca-95fa-5487a19c1dfd",
       "name": "Get Google Ads secrets",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -359,7 +359,7 @@
       "notes": "Developer token, OAuth client id/secret, refresh token and MCC id, entered by Rob on the dashboard Settings page (stored in Supabase private.google_ads_secrets - never readable by the browser)."
     },
     {
-      "id": "9006c344-d290-4b86-a0d0-afa46c064764",
+      "id": "9779aa39-2db0-4710-bb28-e4f2341a3d52",
       "name": "Refresh Google token",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -403,7 +403,7 @@
       "notes": "OAuth refresh, same as the reference. Values from 'Get Google Ads secrets'. Test: Execute step - the output must contain access_token."
     },
     {
-      "id": "d00b7895-b2d9-4471-babb-4cd125bac4e5",
+      "id": "c83b12bc-ee8d-4c7d-bda9-e9cd7becac59",
       "name": "Validate change",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -433,7 +433,7 @@
       "notes": "validateOnly: Google checks the change without making it."
     },
     {
-      "id": "9719ee0a-666e-405b-bb8b-3f621197aa8d",
+      "id": "29072d61-6a36-46eb-ab8f-a15b31ed2132",
       "name": "Check validation",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -446,7 +446,7 @@
       }
     },
     {
-      "id": "3949867f-8343-423a-9822-5c18b05ae735",
+      "id": "90943a1b-0b39-4d88-a917-e7b70eec5eaf",
       "name": "Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -463,7 +463,7 @@
           },
           "conditions": [
             {
-              "id": "d8f4a5dc-c8ae-4da3-aeb9-01b69968ff4a",
+              "id": "25e816ce-8026-4771-9eaf-fd76f71f464d",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -479,7 +479,7 @@
       }
     },
     {
-      "id": "ebe9018b-02d5-4f08-b15b-49430408c780",
+      "id": "e3e2213c-92f1-4374-9cef-82cfdfa6ebeb",
       "name": "Apply change",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -509,7 +509,7 @@
       "notes": "The real change. Only reached after the guards and a clean validateOnly call."
     },
     {
-      "id": "2322f49e-5727-4bdc-97d3-b84b2ca708fb",
+      "id": "8799598d-c11d-43f0-9313-a1aa74dfa7fa",
       "name": "Plan records",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -518,11 +518,11 @@
         200
       ],
       "parameters": {
-        "jsCode": "// ---- shared/gads.js (included by scripts/build-n8n.mjs) -------------------\n// Reading Google Ads REST responses from an HTTP Request node that has\n// \"Full response\" on (and usually \"Never error\"), with the body as text or JSON.\n\nfunction gadsBody(r) {\n  let body = r && (r.body !== undefined ? r.body : r.data);\n  if (typeof body === 'string') {\n    try {\n      body = body ? JSON.parse(body) : null;\n    } catch (e) {\n      return { __unparsable: true };\n    }\n  }\n  return body;\n}\n\n// Human-readable error from a failed call, or null when it succeeded.\nfunction gadsError(r) {\n  if (!r) return 'no response';\n  if (r.error && r.statusCode === undefined) return String(r.error.message || JSON.stringify(r.error)).slice(0, 500);\n  if (r.statusCode >= 200 && r.statusCode < 300) return null;\n  const body = gadsBody(r);\n  const first = Array.isArray(body) ? body[0] : body;\n  const err = first && first.error;\n  const detail = err && err.details && err.details[0] && err.details[0].errors && err.details[0].errors[0];\n  const code = detail && detail.errorCode ? ` [${Object.values(detail.errorCode).join(',')}]` : '';\n  return `${r.statusCode} ${(detail && detail.message) || (err && err.message) || 'error'}${code}`.slice(0, 500);\n}\n\n// searchStream / search -> { rows } or { error }.\nfunction parseStream(r) {\n  const error = gadsError(r);\n  if (error) return { error };\n  const body = gadsBody(r);\n  if (body && body.__unparsable) return { error: 'response was not JSON' };\n  const rows = [];\n  for (const batch of Array.isArray(body) ? body : [body]) {\n    for (const row of (batch && batch.results) || []) rows.push(row);\n  }\n  return { rows };\n}\n// ---- end shared/gads.js -----------------------------------------------------\n\n// Runs after any outcome: refused by the guards, rejected by Google's\n// validate-only call, failed, or applied. Emits the Supabase writes\n// (write_log always; campaign + source row only on success) and carries the\n// webhook answer in `respond`.\nconst plan = $('Plan change').first().json;\nconst user = $('Auth: check role').first().json.user;\nconst ran = (name) => {\n  try {\n    return $(name).first().json;\n  } catch (e) {\n    return null; // node did not run on this path\n  }\n};\nconst validation = ran('Validate change');\nconst applied = ran('Apply change');\nconst ctx = plan.ctx || {};\nconst NOOP = { method: 'GET', path: 'clients?select=id&limit=0', body: null };\n\nconst logRow = (validateOnly, status, response) => ({\n  actor_id: user.user_id,\n  actor_role: user.role,\n  customer_id: ctx.customer_id,\n  is_test_account: Boolean(ctx.is_test_account),\n  workflow: 'ff-apply-campaign-action',\n  operation: (plan.action && plan.action.action_type) || (ctx.proposed_action && ctx.proposed_action.action_type) || 'unknown',\n  validate_only: validateOnly,\n  request: plan.mutate_body || { proposed_action: ctx.proposed_action || null },\n  response,\n  status,\n});\nconst out = (writes, respond) => (writes.length ? writes : [NOOP]).map((w) => ({ json: { ...w, respond } }));\nconst logWrite = (rows) => ({ method: 'POST', path: 'write_log', prefer: 'return=minimal', body: rows });\n\nif (!plan.ok) {\n  const writes = ctx.customer_id ? [logWrite([logRow(false, 'refused', { error: plan.error })])] : [];\n  return out(writes, { status: plan.status, body: { error: plan.error } });\n}\n\nconst validateError = gadsError(validation);\nif (validateError) {\n  return out([logWrite([logRow(true, 'failed', { error: validateError })])],\n    { status: 422, body: { error: `Google Ads rejected the change: ${validateError}` } });\n}\n\nconst applyError = gadsError(applied);\nconst validatedRow = logRow(true, 'ok', gadsBody(validation));\nif (applyError) {\n  return out([logWrite([validatedRow, logRow(false, 'failed', { error: applyError })])],\n    { status: 502, body: { error: `The change passed validation but Google Ads did not apply it: ${applyError}` } });\n}\n\nconst sourcePath = plan.source === 'chat'\n  ? `campaign_chat_messages?id=eq.${plan.source_id}&action_status=eq.proposed`\n  : `message_drafts?message_id=eq.${plan.source_id}&action_status=eq.proposed`;\n\nreturn out([\n  logWrite([validatedRow, logRow(false, 'ok', gadsBody(applied))]),\n  // Write the new value straight back so the dashboard is right before the next\n  // sync (reference fix: \"applied a $2 budget, dashboard still showed $1\").\n  { method: 'PATCH', path: `campaigns?customer_id=eq.${ctx.customer_id}&campaign_id=eq.${ctx.campaign_id}`,\n    prefer: 'return=minimal', body: plan.campaign_patch },\n  { method: 'PATCH', path: sourcePath, prefer: 'return=minimal', body: { action_status: 'applied' } },\n], { status: 200, body: { ok: true, applied: plan.action } });\n"
+        "jsCode": "// ---- shared/gads.js (included by scripts/build-n8n.mjs) -------------------\n// Reading Google Ads REST responses from an HTTP Request node that has\n// \"Full response\" on (and usually \"Never error\"), with the body as text or JSON.\n\nfunction gadsBody(r) {\n  let body = r && (r.body !== undefined ? r.body : r.data);\n  if (typeof body === 'string') {\n    try {\n      body = body ? JSON.parse(body) : null;\n    } catch (e) {\n      return { __unparsable: true };\n    }\n  }\n  return body;\n}\n\n// Human-readable error from a failed call, or null when it succeeded.\nfunction gadsError(r) {\n  if (!r) return 'no response';\n  if (r.error && r.statusCode === undefined) return String(r.error.message || JSON.stringify(r.error)).slice(0, 500);\n  if (r.statusCode >= 200 && r.statusCode < 300) return null;\n  const body = gadsBody(r);\n  const first = Array.isArray(body) ? body[0] : body;\n  const err = first && first.error;\n  const detail = err && err.details && err.details[0] && err.details[0].errors && err.details[0].errors[0];\n  const code = detail && detail.errorCode ? ` [${Object.values(detail.errorCode).join(',')}]` : '';\n  return `${r.statusCode} ${(detail && detail.message) || (err && err.message) || 'error'}${code}`.slice(0, 500);\n}\n\n// searchStream / search -> { rows } or { error }.\nfunction parseStream(r) {\n  const error = gadsError(r);\n  if (error) return { error };\n  const body = gadsBody(r);\n  if (body && body.__unparsable) return { error: 'response was not JSON' };\n  const rows = [];\n  for (const batch of Array.isArray(body) ? body : [body]) {\n    for (const row of (batch && batch.results) || []) rows.push(row);\n  }\n  return { rows };\n}\n// ---- end shared/gads.js -----------------------------------------------------\n\n// Runs after any outcome: refused by the guards, rejected by Google's\n// validate-only call, failed, or applied. Emits the Supabase writes\n// (write_log always; campaign + source row only on success) and carries the\n// webhook answer in `respond`.\nconst plan = $('Plan change').first().json;\nconst user = $('Auth: check role').first().json.user;\nconst ran = (name) => {\n  try {\n    return $(name).first().json;\n  } catch (e) {\n    return null; // node did not run on this path\n  }\n};\nconst validation = ran('Validate change');\nconst applied = ran('Apply change');\nconst ctx = plan.ctx || {};\nconst NOOP = { method: 'GET', path: 'clients?select=id&limit=0', body: null };\n\nconst logRow = (validateOnly, status, response) => ({\n  actor_id: user.user_id,\n  actor_role: user.role,\n  customer_id: ctx.customer_id,\n  is_test_account: Boolean(ctx.is_test_account),\n  workflow: 'ff-apply-campaign-action',\n  operation: (plan.action && plan.action.action_type) || (ctx.proposed_action && ctx.proposed_action.action_type) || 'unknown',\n  validate_only: validateOnly,\n  request: plan.mutate_body || { proposed_action: ctx.proposed_action || null },\n  response,\n  status,\n});\nconst out = (writes, respond) => (writes.length ? writes : [NOOP]).map((w) => ({ json: { ...w, respond } }));\nconst logWrite = (rows) => ({ method: 'POST', path: 'write_log', prefer: 'return=minimal', body: rows });\n\nif (!plan.ok) {\n  const writes = ctx.customer_id ? [logWrite([logRow(false, 'refused', { error: plan.error })])] : [];\n  return out(writes, { status: plan.status, body: { error: plan.error } });\n}\n\n// Google sign-in first: without an access token every call below is a 401.\nconst token = ran('Refresh Google token');\nif (token && !token.access_token) {\n  const why = [token.error, token.error_description].filter(Boolean).join(' - ') || 'no access token';\n  return out([logWrite([logRow(true, 'failed', { error: `Google sign-in failed: ${why}` })])], {\n    status: 502,\n    body: { error: `Google sign-in failed (${why}). Open Settings > Test connection; if it fails, press Connect with Google again.` },\n  });\n}\n\n// ---- Call tracking setup: step A (one or two requests) and step B (call asset)\nif (plan.source === 'tracking') {\n  const ranAll = (name) => {\n    try {\n      return $(name).all();\n    } catch (e) {\n      return [];\n    }\n  };\n  const logs = [];\n  const errors = [];\n  const record = (node, isValidate, labelOf) => {\n    ranAll(node).forEach((item, i) => {\n      const err = gadsError(item.json);\n      const label = labelOf(i);\n      logs.push({ ...logRow(isValidate, err ? 'failed' : 'ok', err ? { error: err } : gadsBody(item.json)), request: { step: label } });\n      if (err) errors.push(`${label}: ${err}`);\n    });\n  };\n  const labelA = (node) => (i) => {\n    try {\n      return $(node).itemMatching(i).json.label;\n    } catch (e) {\n      return 'step A';\n    }\n  };\n  record('Validate tracking', true, labelA('Tracking: requests'));\n  record('Apply tracking', false, labelA('Tracking: real requests'));\n  record('Validate call asset', true, () => 'call asset');\n  record('Apply call asset', false, () => 'call asset');\n  const assetPlan = ran('Plan call asset');\n  if (assetPlan && assetPlan.failed) errors.push(assetPlan.reason);\n\n  const appliedA = ranAll('Apply tracking').length > 0;\n  const appliedAsset = ranAll('Apply call asset').some((item) => !gadsError(item.json));\n  const changed = appliedA || appliedAsset;\n  const respond = errors.length\n    ? { status: changed ? 502 : 422, body: { error: `Call tracking ${changed ? 'was only partly set up' : 'was not set up'}: ${errors.join(' | ').slice(0, 400)}`, steps: plan.action.steps } }\n    : { status: 200, body: { ok: true, steps: plan.action.steps, note: 'Done. The dashboard shows it after the next sync.' } };\n  return out(logs.length ? [logWrite(logs)] : [], respond);\n}\n\nconst validateError = gadsError(validation);\nif (validateError) {\n  return out([logWrite([logRow(true, 'failed', { error: validateError })])],\n    { status: 422, body: { error: `Google Ads rejected the change: ${validateError}` } });\n}\n\nconst applyError = gadsError(applied);\nconst validatedRow = logRow(true, 'ok', gadsBody(validation));\nif (applyError) {\n  return out([logWrite([validatedRow, logRow(false, 'failed', { error: applyError })])],\n    { status: 502, body: { error: `The change passed validation but Google Ads did not apply it: ${applyError}` } });\n}\n\nif (plan.source === 'negatives') {\n  // Only the log here: the new negatives arrive in the negatives table (and the\n  // \"Already negative\" column) with the next sync.\n  const a = plan.action;\n  return out([logWrite([validatedRow, logRow(false, 'ok', gadsBody(applied))])],\n    { status: 200, body: { ok: true, added: a.terms.length, skipped: a.skipped, level: a.level } });\n}\n\nconst sourcePath = plan.source === 'chat'\n  ? `campaign_chat_messages?id=eq.${plan.source_id}&action_status=eq.proposed`\n  : `message_drafts?message_id=eq.${plan.source_id}&action_status=eq.proposed`;\n\nreturn out([\n  logWrite([validatedRow, logRow(false, 'ok', gadsBody(applied))]),\n  // Write the new value straight back so the dashboard is right before the next\n  // sync (reference fix: \"applied a $2 budget, dashboard still showed $1\").\n  { method: 'PATCH', path: `campaigns?customer_id=eq.${ctx.customer_id}&campaign_id=eq.${ctx.campaign_id}`,\n    prefer: 'return=minimal', body: plan.campaign_patch },\n  { method: 'PATCH', path: sourcePath, prefer: 'return=minimal', body: { action_status: 'applied' } },\n], { status: 200, body: { ok: true, applied: plan.action } });\n"
       }
     },
     {
-      "id": "4e016c02-ba8d-4cd0-9f5b-103157d9a72f",
+      "id": "e485fbba-694d-40dd-b374-370c44ca3a69",
       "name": "Save records",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -566,7 +566,7 @@
       "notes": "write_log, plus the Supabase follow-up for a successful change."
     },
     {
-      "id": "9cd4435b-ccdc-4e29-95e0-01e2a22b543b",
+      "id": "8e87bd36-6206-4f8b-81a4-95c422a96137",
       "name": "Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -578,6 +578,359 @@
         "jsCode": "return [{ json: $('Plan records').first().json.respond }];"
       },
       "executeOnce": true
+    },
+    {
+      "id": "b7c3662e-acc5-45cf-ae53-ef025f8ff3a7",
+      "name": "Which change?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "1a6977e6-2ff4-497f-addb-3f8f201fd034",
+              "leftValue": "={{ $('Plan change').first().json.source === 'tracking' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "425fce5a-3126-41d5-aeda-769e7ee3decc",
+      "name": "Tracking: step A?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        600
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "3dd761d5-db07-43c8-ba44-2aa3351d2269",
+              "leftValue": "={{ $('Plan change').first().json.tracking.requests_a.length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9fa06c36-7fb4-4aa3-b5c1-dc25cd1bf9c3",
+      "name": "Tracking: requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        600
+      ],
+      "parameters": {
+        "jsCode": "return $('Plan change').first().json.tracking.requests_a.map((r) => ({ json: r }));"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "d07fa146-e697-4fab-92ab-9b11f919b02c",
+      "name": "Validate tracking",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3520,
+        600
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://googleads.googleapis.com/{{ $('Config').first().json.GOOGLE_ADS_API_VERSION }}/customers/{{ $('Plan change').first().json.customer_id }}{{ $json.url_suffix }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify(Object.assign({ \"Authorization\": \"Bearer \" + ($('Refresh Google token').first().json.access_token || 'missing'), \"developer-token\": $('Get Google Ads secrets').first().json.developer_token || '', \"Content-Type\": \"application/json\" }, $('Plan change').first().json.login_customer_id ? { \"login-customer-id\": $('Plan change').first().json.login_customer_id } : {})) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify(Object.assign({}, $json.body, { validateOnly: true })) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "notes": "validateOnly for step A: account settings, then the call conversion actions. One call per item."
+    },
+    {
+      "id": "5b7dac82-de9c-4726-a4cc-525fac63017b",
+      "name": "Check tracking",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        600
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/gads.js (included by scripts/build-n8n.mjs) -------------------\n// Reading Google Ads REST responses from an HTTP Request node that has\n// \"Full response\" on (and usually \"Never error\"), with the body as text or JSON.\n\nfunction gadsBody(r) {\n  let body = r && (r.body !== undefined ? r.body : r.data);\n  if (typeof body === 'string') {\n    try {\n      body = body ? JSON.parse(body) : null;\n    } catch (e) {\n      return { __unparsable: true };\n    }\n  }\n  return body;\n}\n\n// Human-readable error from a failed call, or null when it succeeded.\nfunction gadsError(r) {\n  if (!r) return 'no response';\n  if (r.error && r.statusCode === undefined) return String(r.error.message || JSON.stringify(r.error)).slice(0, 500);\n  if (r.statusCode >= 200 && r.statusCode < 300) return null;\n  const body = gadsBody(r);\n  const first = Array.isArray(body) ? body[0] : body;\n  const err = first && first.error;\n  const detail = err && err.details && err.details[0] && err.details[0].errors && err.details[0].errors[0];\n  const code = detail && detail.errorCode ? ` [${Object.values(detail.errorCode).join(',')}]` : '';\n  return `${r.statusCode} ${(detail && detail.message) || (err && err.message) || 'error'}${code}`.slice(0, 500);\n}\n\n// searchStream / search -> { rows } or { error }.\nfunction parseStream(r) {\n  const error = gadsError(r);\n  if (error) return { error };\n  const body = gadsBody(r);\n  if (body && body.__unparsable) return { error: 'response was not JSON' };\n  const rows = [];\n  for (const batch of Array.isArray(body) ? body : [body]) {\n    for (const row of (batch && batch.results) || []) rows.push(row);\n  }\n  return { rows };\n}\n// ---- end shared/gads.js -----------------------------------------------------\n\nconst errors = $input.all().map((i) => gadsError(i.json)).filter(Boolean);\nreturn [{ json: { ok: errors.length === 0, error: errors.join(' | ') || null } }];"
+      }
+    },
+    {
+      "id": "36911400-4cd9-447b-b3bd-dca2f41c4c9d",
+      "name": "Tracking valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        600
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "207348b9-8af4-4354-89e5-c5957a753157",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cf365816-38fc-4603-a4c2-11940edb6772",
+      "name": "Tracking: real requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        600
+      ],
+      "parameters": {
+        "jsCode": "return $('Tracking: requests').all().map((i) => ({ json: i.json }));"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "de07e707-fbba-464c-8c88-fe11d4035143",
+      "name": "Apply tracking",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4400,
+        600
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://googleads.googleapis.com/{{ $('Config').first().json.GOOGLE_ADS_API_VERSION }}/customers/{{ $('Plan change').first().json.customer_id }}{{ $json.url_suffix }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify(Object.assign({ \"Authorization\": \"Bearer \" + ($('Refresh Google token').first().json.access_token || 'missing'), \"developer-token\": $('Get Google Ads secrets').first().json.developer_token || '', \"Content-Type\": \"application/json\" }, $('Plan change').first().json.login_customer_id ? { \"login-customer-id\": $('Plan change').first().json.login_customer_id } : {})) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "notes": "Step A for real, after a clean validateOnly."
+    },
+    {
+      "id": "d305a86e-bfe5-454f-842a-c836fc74f84c",
+      "name": "Plan call asset",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4620,
+        800
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/gads.js (included by scripts/build-n8n.mjs) -------------------\n// Reading Google Ads REST responses from an HTTP Request node that has\n// \"Full response\" on (and usually \"Never error\"), with the body as text or JSON.\n\nfunction gadsBody(r) {\n  let body = r && (r.body !== undefined ? r.body : r.data);\n  if (typeof body === 'string') {\n    try {\n      body = body ? JSON.parse(body) : null;\n    } catch (e) {\n      return { __unparsable: true };\n    }\n  }\n  return body;\n}\n\n// Human-readable error from a failed call, or null when it succeeded.\nfunction gadsError(r) {\n  if (!r) return 'no response';\n  if (r.error && r.statusCode === undefined) return String(r.error.message || JSON.stringify(r.error)).slice(0, 500);\n  if (r.statusCode >= 200 && r.statusCode < 300) return null;\n  const body = gadsBody(r);\n  const first = Array.isArray(body) ? body[0] : body;\n  const err = first && first.error;\n  const detail = err && err.details && err.details[0] && err.details[0].errors && err.details[0].errors[0];\n  const code = detail && detail.errorCode ? ` [${Object.values(detail.errorCode).join(',')}]` : '';\n  return `${r.statusCode} ${(detail && detail.message) || (err && err.message) || 'error'}${code}`.slice(0, 500);\n}\n\n// searchStream / search -> { rows } or { error }.\nfunction parseStream(r) {\n  const error = gadsError(r);\n  if (error) return { error };\n  const body = gadsBody(r);\n  if (body && body.__unparsable) return { error: 'response was not JSON' };\n  const rows = [];\n  for (const batch of Array.isArray(body) ? body : [body]) {\n    for (const row of (batch && batch.results) || []) rows.push(row);\n  }\n  return { rows };\n}\n// ---- end shared/gads.js -----------------------------------------------------\n\n// Call tracking, step B: after step A (account settings + call conversion\n// actions) is applied, build the account-level call asset. It needs the\n// resource name of \"Calls from ads 90s+\", which step A may have just created -\n// read from step A's answer, matched to its request with itemMatching(i).\n// Output: { need: false, reason } or { need: true, body } for googleAds:mutate.\nconst plan = $('Plan change').first().json;\nconst t = plan.tracking;\nconst cid = plan.customer_id;\nconst ran = (name) => {\n  try {\n    return $(name).all();\n  } catch (e) {\n    return null; // step A did not run (nothing to change there)\n  }\n};\n\nlet adCallAction = t.ad_call_action;\nconst applied = ran('Apply tracking');\nif (applied) {\n  for (let i = 0; i < applied.length; i++) {\n    const req = $('Tracking: real requests').itemMatching(i).json;\n    const err = gadsError(applied[i].json);\n    if (err) return [{ json: { need: false, failed: true, reason: `step A failed: ${err}` } }];\n    if (req.label === 'conversion_actions') {\n      const results = (gadsBody(applied[i].json) || {}).results || [];\n      (req.op_types || []).forEach((type, k) => {\n        if (type === 'AD_CALL' && results[k] && results[k].resourceName) adCallAction = results[k].resourceName;\n      });\n    }\n  }\n}\n\nif (!t.need_asset) return [{ json: { need: false, reason: 'the account already has a call asset' } }];\nif (!adCallAction) return [{ json: { need: false, failed: true, reason: 'no \"Calls from ads 90s+\" action to count the calls' } }];\n\nconst asset = `customers/${cid}/assets/-1`;\nreturn [{\n  json: {\n    need: true,\n    body: {\n      mutateOperations: [\n        {\n          assetOperation: {\n            create: {\n              resourceName: asset,\n              callAsset: {\n                countryCode: t.country_code || 'US',\n                phoneNumber: t.phone,\n                callConversionReportingState: 'USE_RESOURCE_LEVEL_CALL_CONVERSION_ACTION',\n                callConversionAction: adCallAction,\n              },\n            },\n          },\n        },\n        { customerAssetOperation: { create: { asset, fieldType: 'CALL' } } },\n      ],\n    },\n  },\n}];\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "d546c143-599c-4c3a-aa70-50ae934f6044",
+      "name": "Call asset needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4840,
+        800
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "1724434d-b5ef-4a86-9f2b-e817f2b76046",
+              "leftValue": "={{ $json.need === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d7feda60-95cd-43e8-ba5d-5c551b212f74",
+      "name": "Validate call asset",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5060,
+        800
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://googleads.googleapis.com/{{ $('Config').first().json.GOOGLE_ADS_API_VERSION }}/customers/{{ $('Plan change').first().json.customer_id }}/googleAds:mutate",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify(Object.assign({ \"Authorization\": \"Bearer \" + ($('Refresh Google token').first().json.access_token || 'missing'), \"developer-token\": $('Get Google Ads secrets').first().json.developer_token || '', \"Content-Type\": \"application/json\" }, $('Plan change').first().json.login_customer_id ? { \"login-customer-id\": $('Plan change').first().json.login_customer_id } : {})) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify(Object.assign({}, $json.body, { validateOnly: true })) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "notes": "validateOnly for step B: the account-level call asset."
+    },
+    {
+      "id": "e5181be5-4818-4553-87ea-911aa33ec85d",
+      "name": "Check call asset",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5280,
+        800
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/gads.js (included by scripts/build-n8n.mjs) -------------------\n// Reading Google Ads REST responses from an HTTP Request node that has\n// \"Full response\" on (and usually \"Never error\"), with the body as text or JSON.\n\nfunction gadsBody(r) {\n  let body = r && (r.body !== undefined ? r.body : r.data);\n  if (typeof body === 'string') {\n    try {\n      body = body ? JSON.parse(body) : null;\n    } catch (e) {\n      return { __unparsable: true };\n    }\n  }\n  return body;\n}\n\n// Human-readable error from a failed call, or null when it succeeded.\nfunction gadsError(r) {\n  if (!r) return 'no response';\n  if (r.error && r.statusCode === undefined) return String(r.error.message || JSON.stringify(r.error)).slice(0, 500);\n  if (r.statusCode >= 200 && r.statusCode < 300) return null;\n  const body = gadsBody(r);\n  const first = Array.isArray(body) ? body[0] : body;\n  const err = first && first.error;\n  const detail = err && err.details && err.details[0] && err.details[0].errors && err.details[0].errors[0];\n  const code = detail && detail.errorCode ? ` [${Object.values(detail.errorCode).join(',')}]` : '';\n  return `${r.statusCode} ${(detail && detail.message) || (err && err.message) || 'error'}${code}`.slice(0, 500);\n}\n\n// searchStream / search -> { rows } or { error }.\nfunction parseStream(r) {\n  const error = gadsError(r);\n  if (error) return { error };\n  const body = gadsBody(r);\n  if (body && body.__unparsable) return { error: 'response was not JSON' };\n  const rows = [];\n  for (const batch of Array.isArray(body) ? body : [body]) {\n    for (const row of (batch && batch.results) || []) rows.push(row);\n  }\n  return { rows };\n}\n// ---- end shared/gads.js -----------------------------------------------------\n\nconst r = $input.first().json || {};\nconst already = false;\nreturn [{ json: { ok: already || !gadsError(r), error: gadsError(r) } }];\n// checks: Validate call asset"
+      }
+    },
+    {
+      "id": "67b613ca-0dcc-4cca-b922-74e6e675621e",
+      "name": "Call asset valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        5500,
+        800
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "ddb95741-0d4d-4387-a351-18ea48217377",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ae80af66-68b3-443b-ab6a-ae74d8a9f936",
+      "name": "Apply call asset",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5720,
+        800
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://googleads.googleapis.com/{{ $('Config').first().json.GOOGLE_ADS_API_VERSION }}/customers/{{ $('Plan change').first().json.customer_id }}/googleAds:mutate",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify(Object.assign({ \"Authorization\": \"Bearer \" + ($('Refresh Google token').first().json.access_token || 'missing'), \"developer-token\": $('Get Google Ads secrets').first().json.developer_token || '', \"Content-Type\": \"application/json\" }, $('Plan change').first().json.login_customer_id ? { \"login-customer-id\": $('Plan change').first().json.login_customer_id } : {})) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Plan call asset').first().json.body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "notes": "Step B for real: call asset on the whole account (every campaign, also future ones)."
     }
   ],
   "connections": {
@@ -782,7 +1135,196 @@
       "main": [
         [
           {
+            "node": "Which change?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Which change?": {
+      "main": [
+        [
+          {
+            "node": "Tracking: step A?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Validate change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tracking: step A?": {
+      "main": [
+        [
+          {
+            "node": "Tracking: requests",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Plan call asset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tracking: requests": {
+      "main": [
+        [
+          {
+            "node": "Validate tracking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate tracking": {
+      "main": [
+        [
+          {
+            "node": "Check tracking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check tracking": {
+      "main": [
+        [
+          {
+            "node": "Tracking valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tracking valid?": {
+      "main": [
+        [
+          {
+            "node": "Tracking: real requests",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Plan records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tracking: real requests": {
+      "main": [
+        [
+          {
+            "node": "Apply tracking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply tracking": {
+      "main": [
+        [
+          {
+            "node": "Plan call asset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan call asset": {
+      "main": [
+        [
+          {
+            "node": "Call asset needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call asset needed?": {
+      "main": [
+        [
+          {
+            "node": "Validate call asset",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Plan records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate call asset": {
+      "main": [
+        [
+          {
+            "node": "Check call asset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check call asset": {
+      "main": [
+        [
+          {
+            "node": "Call asset valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call asset valid?": {
+      "main": [
+        [
+          {
+            "node": "Apply call asset",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Plan records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply call asset": {
+      "main": [
+        [
+          {
+            "node": "Plan records",
             "type": "main",
             "index": 0
           }

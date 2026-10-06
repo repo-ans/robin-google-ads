@@ -12,6 +12,7 @@ const CampaignDetailPage = lazy(() => import("./pages/CampaignDetailPage"));
 const UsersPage = lazy(() => import("./pages/UsersPage"));
 const AuditPage = lazy(() => import("./pages/AuditPage"));
 const BuilderPage = lazy(() => import("./pages/BuilderPage"));
+const CaseMatchPage = lazy(() => import("./pages/CaseMatchPage"));
 const AccountPage = lazy(() => import("./pages/AccountPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const GoogleCallbackPage = lazy(() => import("./pages/GoogleCallbackPage"));
@@ -41,6 +42,7 @@ export default function App() {
           <Route path="/dashboard/clients/:clientId/users" element={guard(<UsersPage />, AGENCY)} />
           <Route path="/dashboard/clients/:clientId/audit" element={guard(<AuditPage />, AGENCY)} />
           <Route path="/dashboard/clients/:clientId/builder" element={guard(<BuilderPage />, AGENCY)} />
+          <Route path="/dashboard/clients/:clientId/case-match" element={guard(<CaseMatchPage />, AGENCY)} />
           <Route path="/account" element={guard(<AccountPage />)} />
           <Route path="/settings" element={guard(<SettingsPage />, AGENCY)} />
           <Route path="/settings/system" element={guard(<SystemPage />, AGENCY)} />

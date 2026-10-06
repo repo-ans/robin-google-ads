@@ -2,7 +2,7 @@
   "name": "ff-audit",
   "nodes": [
     {
-      "id": "7a263697-5a82-44f0-ba64-c52eed2f3517",
+      "id": "da92381d-1006-42f4-9e3d-8664f7f53e0a",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -22,7 +22,7 @@
       "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
     },
     {
-      "id": "685c4116-51f5-473f-be70-8f87669d2c54",
+      "id": "171d1a9c-9d7c-4376-99a7-6a8a490272d8",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -36,7 +36,7 @@
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
     },
     {
-      "id": "4946aa6c-ef4f-45ae-9801-b295db361ecd",
+      "id": "5b973675-8d7a-41d9-893a-29229e5d5641",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -50,7 +50,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "4630fd6d-2c7d-4f15-a976-8d71d3aae1ea",
+      "id": "8e2e79cd-197d-497c-a76d-daf35b15f31d",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -86,7 +86,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "3e4afd88-71be-4f09-b6c1-87bb539ab907",
+      "id": "8b09eb44-4ac2-4968-901b-08381b2505ac",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -131,7 +131,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "9a7af33d-e978-495d-8c5a-72a68589658e",
+      "id": "f904028a-71bb-437b-8509-fb13ad04380d",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -145,7 +145,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "7a98b919-e22d-4a1b-9859-e981fb7aaae4",
+      "id": "c1983075-e2ab-467f-8474-680ce9a1d268",
       "parameters": {
         "conditions": {
           "options": {
@@ -178,7 +178,7 @@
       ]
     },
     {
-      "id": "7361b21c-4590-4ab4-9796-f1437411ea2d",
+      "id": "4aeef4e6-f5bc-4e91-8953-a06c0563e781",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -196,7 +196,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "608d3084-6ad0-49f4-9c58-ac1a70c54975",
+      "id": "0bbd181e-820e-473e-a5a8-fee1cdb4c77a",
       "name": "Validate input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -209,7 +209,7 @@
       }
     },
     {
-      "id": "5fe25164-2047-43fd-bdb0-bc0da5bb2e32",
+      "id": "f49f4b43-557e-4aa8-bcc4-90a06d3f9406",
       "name": "Validate input ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -226,7 +226,7 @@
           },
           "conditions": [
             {
-              "id": "28d21002-fd2a-4aec-870d-c7bddc8fdbef",
+              "id": "61fe5802-7adb-4355-9152-6177a531f3e5",
               "leftValue": "={{ $json.valid === true }}",
               "rightValue": true,
               "operator": {
@@ -242,7 +242,7 @@
       }
     },
     {
-      "id": "aabc7515-1703-4dde-9992-a540dbcf0f2d",
+      "id": "c8ac8c1f-0cba-497d-a1ff-a275b019c6a5",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -259,7 +259,7 @@
       }
     },
     {
-      "id": "2746fa84-271b-4d02-88b5-32bd5217ee57",
+      "id": "05fa08ef-6afb-4abc-81c9-d445ced220e2",
       "name": "Generate?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -276,7 +276,7 @@
           },
           "conditions": [
             {
-              "id": "e61ddaf4-841d-4f9a-9709-8d531823687b",
+              "id": "e5fa5411-9fb3-42f5-8ff3-09578cdfaf4c",
               "leftValue": "={{ $json.action === 'generate' }}",
               "rightValue": true,
               "operator": {
@@ -292,7 +292,7 @@
       }
     },
     {
-      "id": "e3213d0e-8934-45e5-b4aa-bf41c7e4bf0d",
+      "id": "757ccf3b-9568-48a4-9398-cea4435e823b",
       "name": "Get account",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -316,7 +316,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "dcc8be7d-9eb7-42cd-bce2-30f90035828b",
+      "id": "c0fdadbe-cf69-4c75-b88b-fadd5a620586",
       "name": "Check account",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -329,7 +329,7 @@
       }
     },
     {
-      "id": "1e661788-7cdf-4bd5-b139-d5a2e07fc5e0",
+      "id": "5b3a4766-d3f6-4dd6-8c69-86561a837368",
       "name": "Account ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -346,7 +346,7 @@
           },
           "conditions": [
             {
-              "id": "f08aaf1e-620c-4659-afb4-8b3fa19ae0bf",
+              "id": "4da31a67-3fe1-4861-b2c2-1aa696525200",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -362,7 +362,7 @@
       }
     },
     {
-      "id": "e949c77d-d6c1-4c8e-8084-8e2def220983",
+      "id": "d05191c4-4244-4614-a1b6-4543de007849",
       "name": "Get audit data",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -378,17 +378,25 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ p_customer_id: $('Validate input').first().json.customer_id }) }}",
-        "options": {}
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
       },
       "credentials": {
         "supabaseApi": {
           "id": "",
           "name": "FF Supabase (service role)"
         }
-      }
+      },
+      "notes": "Full response + never error: a database failure becomes a plain message for the dashboard instead of a silent stop."
     },
     {
-      "id": "43238403-cb64-4e36-a3c9-bb951e058a30",
+      "id": "43ab7d78-5d95-477e-a2cc-390918217761",
       "name": "Write audit",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -397,17 +405,50 @@
         -200
       ],
       "parameters": {
-        "jsCode": "// ff_audit_data -> Markdown audit + summary + issues (PLAN.md Phase 5 content:\n// campaigns, settings, conversion tracking, 90 days of search terms, negatives,\n// issues found). Read only. Search terms are already name-filtered.\n// Calm tone, plain hyphens, no emoji.\nconst v = $('Validate input').first().json;\nconst acctRow = $('Get account').first().json || {};\nconst user = $('Auth: check role').first().json.user;\nconst d = $input.first().json || {};\nconst a = d.account || {};\nconst cur = a.currency || '';\nconst period = d.period || {};\nconst campaigns = d.campaigns || [];\nconst conv = d.conversion_actions || [];\nconst kw = d.keywords || {};\n\nconst n = (x) => Number(x || 0);\nconst m = (x) => `${n(x).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`.trim();\nconst pct = (x) => (x === null || x === undefined ? 'n/a' : `${Math.round(n(x) * 100)}%`);\nconst esc = (s) => String(s === null || s === undefined ? '' : s).replace(/\\|/g, '/').replace(/\\n/g, ' ');\nconst table = (head, rows) => rows.length\n  ? [`| ${head.join(' | ')} |`, `| ${head.map(() => '---').join(' | ')} |`, ...rows.map((r) => `| ${r.map(esc).join(' | ')} |`)].join('\\n')\n  : '_None._';\n\nconst totalCost = campaigns.reduce((s, c) => s + n(c.cost), 0);\nconst totalConv = campaigns.reduce((s, c) => s + n(c.conversions), 0);\nconst totalClicks = campaigns.reduce((s, c) => s + n(c.clicks), 0);\nconst wasted = (d.search_terms_wasted || []).reduce((s, t) => s + n(t.cost), 0);\nconst calls = d.calls || {};\nconst geo = d.geo || {};\n\n// ---- Issues found, most important first\nconst issues = [];\nconst add = (severity, textValue) => issues.push({ severity, text: textValue });\nif (a.auto_tagging === false) add('high', 'Auto-tagging is off. Forms cannot capture the GCLID, so signed cases cannot be matched back to ads.');\nif (a.call_reporting === false) add('high', 'Call reporting is off. Calls of 90 seconds or more cannot be counted.');\nconst callActions = conv.filter((c) => ['AD_CALL', 'WEBSITE_CALL'].includes(c.type) && c.status === 'ENABLED');\nif (!callActions.length) add('high', 'There is no enabled call conversion action (calls from ads or from the website).');\nfor (const c of callActions.filter((x) => x.call_not_90s)) add('medium', `Call action \"${c.name}\" counts calls of ${c.call_seconds ?? 'the default'} seconds. The SOP asks for 90 seconds.`);\nfor (const c of conv.filter((x) => x.no_recent)) add('high', `Conversion action \"${c.name}\" has had spend but no conversions for 14+ days (last: ${c.last_conversion || 'never'}).`);\nif (!conv.some((c) => c.status === 'ENABLED' && c.primary)) add('high', 'No enabled primary conversion action - bidding has nothing to aim for.');\nfor (const c of campaigns) {\n  if (c.geo_type && c.geo_type !== 'PRESENCE') add('medium', `\"${c.name}\" also targets people only interested in the area. The SOP asks for presence only.`);\n  if (c.network_partners || c.network_display) add('medium', `\"${c.name}\" runs on the Search Partners or Display network. The SOP asks for Google Search only.`);\n  if (n(c.budget_lost_is) > 0.2) add('medium', `\"${c.name}\" lost ${pct(c.budget_lost_is)} of possible impressions to budget.`);\n  if (n(c.rank_lost_is) > 0.3) add('low', `\"${c.name}\" lost ${pct(c.rank_lost_is)} of possible impressions to ad rank.`);\n  if (!c.locations) add('high', `\"${c.name}\" has no location targeting.`);\n}\nif (n(kw.broad) > 0) add('medium', `${kw.broad} active keyword(s) use broad match. The SOP asks for phrase or exact only.`);\nfor (const g of (d.ad_groups_keyword_counts || []).filter((x) => n(x.keywords) < 5 || n(x.keywords) > 15)) {\n  add('low', `Ad group \"${g.ad_group}\" has ${g.keywords} keywords. The SOP asks for 5 to 15.`);\n}\nif (n(kw.low_quality) > 0) add('low', `${kw.low_quality} keyword(s) have a Quality Score below 5.`);\nif (d.ads && n(d.ads.disapproved) > 0) add('high', `${d.ads.disapproved} enabled ad(s) are disapproved.`);\nif (!(d.shared_lists || []).length) add('medium', 'No shared negative keyword list. The SOP uses one universal list.');\nif (wasted > 0) add('medium', `${m(wasted)} went to the top search terms with clicks but no conversions in 90 days (see the list below).`);\nif (n(geo.interest_cost) > 0) add('medium', `${m(geo.interest_cost)} was spent on people outside the target area (area of interest).`);\nif (!n(d.assets && d.assets.CALL)) add('medium', 'No call asset (call extension) found.');\nif ((d.recommendations || []).length) add('low', `${d.recommendations.length} Google recommendation(s) are open - review, do not auto-apply.`);\nif (n(d.changes_30d && d.changes_30d.GOOGLE_ADS_API) > 0) add('low', `${d.changes_30d.GOOGLE_ADS_API} change(s) in the last 30 days came through the API.`);\nconst order = { high: 0, medium: 1, low: 2 };\nissues.sort((x, y) => order[x.severity] - order[y.severity]);\n\n// ---- Markdown\nconst title = `${acctRow.clients ? acctRow.clients.name : 'Client'} - Google Ads audit`;\nconst md = [\n  `# ${title}`,\n  '',\n  `Account ${a.name || ''} (${String(a.customer_id || '').replace(/(\\d{3})(\\d{3})(\\d{4})/, '$1-$2-$3')}) - period ${period.from} to ${period.to}.`,\n  `Read only: nothing was changed in Google Ads to make this report. Generated ${new Date().toISOString().slice(0, 10)}.`,\n  '',\n  '## Summary',\n  '',\n  `- Spend: ${m(totalCost)} over ${campaigns.length} campaign(s) with spend`,\n  `- Clicks: ${totalClicks.toLocaleString('en-US')}; conversions: ${Math.round(totalConv * 100) / 100}`,\n  `- Calls: ${n(calls.total)} (${n(calls.over_90s)} of 90 seconds or more, ${n(calls.missed)} missed)`,\n  `- Issues found: ${issues.filter((i) => i.severity === 'high').length} high, ${issues.filter((i) => i.severity === 'medium').length} medium, ${issues.filter((i) => i.severity === 'low').length} low`,\n  '',\n  '## Issues found',\n  '',\n  ...(issues.length ? issues.map((i) => `- **${i.severity}** - ${i.text}`) : ['- Nothing stood out.']),\n  '',\n  '## Account settings',\n  '',\n  table(['Setting', 'Value'], [\n    ['Currency / time zone', `${cur} / ${a.time_zone || ''}`],\n    ['Auto-tagging', a.auto_tagging ? 'on' : 'off'],\n    ['Call reporting', a.call_reporting ? 'on' : 'off'],\n    ['Call conversion reporting', a.call_conversion_reporting ? 'on' : 'off'],\n    ['Conversion tracking', a.conversion_tracking_status || 'unknown'],\n    ['Enhanced conversions for leads', a.enhanced_conversions_for_leads ? 'on' : 'off'],\n    ['Test account', a.is_test_account ? 'yes' : 'no'],\n  ]),\n  '',\n  '## Campaigns (last 90 days)',\n  '',\n  table(['Campaign', 'Status', 'Bidding', 'Budget/day', 'Cost', 'Clicks', 'Conv.', 'Search IS', 'Lost IS (budget)', 'Locations', 'Schedule slots'],\n    campaigns.map((c) => [c.name, c.status, c.bidding, m(c.daily_budget), m(c.cost), c.clicks, c.conversions, pct(c.search_is), pct(c.budget_lost_is), c.locations || 'none', c.schedule_slots || '24/7'])),\n  ...((d.campaigns_without_spend || []).length ? ['', `Campaigns with no spend in the period: ${d.campaigns_without_spend.map((c) => `${c.name} (${c.status})`).join(', ')}.`] : []),\n  '',\n  '## Conversion tracking',\n  '',\n  table(['Action', 'Type', 'Status', 'Primary', 'Counting', 'Call seconds', 'Last conversion'],\n    conv.map((c) => [c.name, c.type, c.status, c.primary ? 'yes' : 'no', c.counting, c.call_seconds ?? '', c.last_conversion || 'never'])),\n  '',\n  '## Keywords',\n  '',\n  `${n(kw.count)} active keywords, average Quality Score ${kw.avg_quality_score ?? 'n/a'}, ${n(kw.low_quality)} below 5. By match type: ${Object.entries(kw.by_match_type || {}).map(([k, x]) => `${k.toLowerCase()} ${x}`).join(', ') || 'none'}.`,\n  '',\n  '## Search terms (last 90 days)',\n  '',\n  'Top terms by cost:',\n  '',\n  table(['Term', 'Cost', 'Clicks', 'Conv.', 'Already negative'], (d.search_terms_top || []).map((t) => [t.term, m(t.cost), t.clicks, t.conversions, t.negated ? 'yes' : 'no'])),\n  '',\n  'Terms with spend and no conversions (candidates for the negative list):',\n  '',\n  table(['Term', 'Cost', 'Clicks'], (d.search_terms_wasted || []).map((t) => [t.term, m(t.cost), t.clicks])),\n  '',\n  `Terms containing a person's name are not shown or stored (${n(d.search_terms_name_filtered && d.search_terms_name_filtered.rows)} daily rows, ${m(d.search_terms_name_filtered && d.search_terms_name_filtered.cost)}).`,\n  '',\n  '## Negative keywords',\n  '',\n  `Campaign level ${n(d.negatives && d.negatives.campaign_level)}, ad group level ${n(d.negatives && d.negatives.ad_group_level)}, shared lists ${n(d.negatives && d.negatives.shared_list_level)}.`,\n  '',\n  table(['Shared list', 'Keywords', 'Campaigns using it'], (d.shared_lists || []).map((l) => [l.name, l.members, l.campaigns])),\n  '',\n  '## Ads and assets',\n  '',\n  `${n(d.ads && d.ads.count)} enabled ads, ${n(d.ads && d.ads.disapproved)} disapproved, ${n(d.ads && d.ads.limited)} limited. Ad strength: ${Object.entries((d.ads && d.ads.by_strength) || {}).map(([k, x]) => `${k.toLowerCase()} ${x}`).join(', ') || 'n/a'}.`,\n  `Assets: ${Object.entries(d.assets || {}).map(([k, x]) => `${k.toLowerCase()} ${x}`).join(', ') || 'none'}.`,\n  '',\n  '## Location',\n  '',\n  `Spend on people in the area: ${m(geo.presence_cost)}. Spend on people only interested in the area: ${m(geo.interest_cost)}.`,\n  '',\n  '## Open Google recommendations',\n  '',\n  ...((d.recommendations || []).length ? d.recommendations.map((r) => `- ${String(r.type).toLowerCase().replace(/_/g, ' ')}${n(r.est_extra_conversions) ? ` (est. +${r.est_extra_conversions} conversions)` : ''}`) : ['- None.']),\n  '',\n  '## Change history (last 30 days)',\n  '',\n  Object.entries(d.changes_30d || {}).map(([k, x]) => `- ${k.toLowerCase().replace(/_/g, ' ')}: ${x}`).join('\\n') || '- No changes.',\n  '',\n].join('\\n').replace(/[–—]/g, '-');\n\nreturn [{\n  json: {\n    row: {\n      client_id: v.client_id,\n      customer_id: v.customer_id,\n      period_from: period.from,\n      period_to: period.to,\n      summary: {\n        cost: Math.round(totalCost * 100) / 100, currency: cur, clicks: totalClicks,\n        conversions: Math.round(totalConv * 100) / 100, calls: n(calls.total), calls_90s: n(calls.over_90s),\n        issues: issues.length, issues_high: issues.filter((i) => i.severity === 'high').length, issue_list: issues,\n      },\n      markdown: md,\n      status: 'draft',\n      created_by: user.user_id,\n    },\n  },\n}];\n"
+        "jsCode": "// ff_audit_data -> Markdown audit + summary + issues (PLAN.md Phase 5 content:\n// campaigns, settings, conversion tracking, 90 days of search terms, negatives,\n// issues found). Read only. Search terms are already name-filtered.\n// Calm tone, plain hyphens, no emoji.\nconst v = $('Validate input').first().json;\nconst acctRow = $('Get account').first().json || {};\nconst user = $('Auth: check role').first().json.user;\n// \"Get audit data\" has full response + never error on, so a database failure\n// (for example a statement timeout) arrives here as data.\nconst res = $input.first().json || {};\nif (!(res.statusCode >= 200 && res.statusCode < 300) || !res.body || typeof res.body !== 'object') {\n  const b = res.body || {};\n  const why = (b && (b.message || b.details)) || (res.error && res.error.message) || `status ${res.statusCode}`;\n  return [{ json: { ok: false, status: 500, body: { error: `Could not read the account data for the audit: ${String(why).slice(0, 200)}` } } }];\n}\nconst d = res.body;\nconst a = d.account || {};\nconst cur = a.currency || '';\nconst period = d.period || {};\nconst campaigns = d.campaigns || [];\nconst conv = d.conversion_actions || [];\nconst kw = d.keywords || {};\n\nconst n = (x) => Number(x || 0);\nconst m = (x) => `${n(x).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`.trim();\nconst pct = (x) => (x === null || x === undefined ? 'n/a' : `${Math.round(n(x) * 100)}%`);\nconst esc = (s) => String(s === null || s === undefined ? '' : s).replace(/\\|/g, '/').replace(/\\n/g, ' ');\nconst table = (head, rows) => rows.length\n  ? [`| ${head.join(' | ')} |`, `| ${head.map(() => '---').join(' | ')} |`, ...rows.map((r) => `| ${r.map(esc).join(' | ')} |`)].join('\\n')\n  : '_None._';\n\nconst totalCost = campaigns.reduce((s, c) => s + n(c.cost), 0);\nconst totalConv = campaigns.reduce((s, c) => s + n(c.conversions), 0);\nconst totalClicks = campaigns.reduce((s, c) => s + n(c.clicks), 0);\nconst wasted = (d.search_terms_wasted || []).reduce((s, t) => s + n(t.cost), 0);\nconst calls = d.calls || {};\nconst geo = d.geo || {};\n\n// ---- Issues found, most important first\nconst issues = [];\nconst add = (severity, textValue) => issues.push({ severity, text: textValue });\nif (a.auto_tagging === false) add('high', 'Auto-tagging is off. Forms cannot capture the GCLID, so signed cases cannot be matched back to ads.');\nif (a.call_reporting === false) add('high', 'Call reporting is off. Calls of 90 seconds or more cannot be counted.');\nconst callActions = conv.filter((c) => ['AD_CALL', 'WEBSITE_CALL'].includes(c.type) && c.status === 'ENABLED');\nif (!callActions.length) add('high', 'There is no enabled call conversion action (calls from ads or from the website).');\nfor (const c of callActions.filter((x) => x.call_not_90s)) add('medium', `Call action \"${c.name}\" counts calls of ${c.call_seconds ?? 'the default'} seconds. The SOP asks for 90 seconds.`);\nfor (const c of conv.filter((x) => x.no_recent)) add('high', `Conversion action \"${c.name}\" has had spend but no conversions for 14+ days (last: ${c.last_conversion || 'never'}).`);\nif (!conv.some((c) => c.status === 'ENABLED' && c.primary)) add('high', 'No enabled primary conversion action - bidding has nothing to aim for.');\nfor (const c of campaigns) {\n  if (c.geo_type && c.geo_type !== 'PRESENCE') add('medium', `\"${c.name}\" also targets people only interested in the area. The SOP asks for presence only.`);\n  if (c.network_partners || c.network_display) add('medium', `\"${c.name}\" runs on the Search Partners or Display network. The SOP asks for Google Search only.`);\n  if (n(c.budget_lost_is) > 0.2) add('medium', `\"${c.name}\" lost ${pct(c.budget_lost_is)} of possible impressions to budget.`);\n  if (n(c.rank_lost_is) > 0.3) add('low', `\"${c.name}\" lost ${pct(c.rank_lost_is)} of possible impressions to ad rank.`);\n  if (!c.locations) add('high', `\"${c.name}\" has no location targeting.`);\n}\nif (n(kw.broad) > 0) add('medium', `${kw.broad} active keyword(s) use broad match. The SOP asks for phrase or exact only.`);\nfor (const g of (d.ad_groups_keyword_counts || []).filter((x) => n(x.keywords) < 5 || n(x.keywords) > 15)) {\n  add('low', `Ad group \"${g.ad_group}\" has ${g.keywords} keywords. The SOP asks for 5 to 15.`);\n}\nif (n(kw.low_quality) > 0) add('low', `${kw.low_quality} keyword(s) have a Quality Score below 5.`);\nif (d.ads && n(d.ads.disapproved) > 0) add('high', `${d.ads.disapproved} enabled ad(s) are disapproved.`);\nif (!(d.shared_lists || []).length) add('medium', 'No shared negative keyword list. The SOP uses one universal list.');\nif (wasted > 0) add('medium', `${m(wasted)} went to the top search terms with clicks but no conversions in 90 days (see the list below).`);\nif (n(geo.interest_cost) > 0) add('medium', `${m(geo.interest_cost)} was spent on people outside the target area (area of interest).`);\nif (!n(d.assets && d.assets.CALL)) add('medium', 'No call asset (call extension) found.');\nif ((d.recommendations || []).length) add('low', `${d.recommendations.length} Google recommendation(s) are open - review, do not auto-apply.`);\nif (n(d.changes_30d && d.changes_30d.GOOGLE_ADS_API) > 0) add('low', `${d.changes_30d.GOOGLE_ADS_API} change(s) in the last 30 days came through the API.`);\nconst order = { high: 0, medium: 1, low: 2 };\nissues.sort((x, y) => order[x.severity] - order[y.severity]);\n\n// ---- Markdown\nconst title = `${acctRow.clients ? acctRow.clients.name : 'Client'} - Google Ads audit`;\nconst md = [\n  `# ${title}`,\n  '',\n  `Account ${a.name || ''} (${String(a.customer_id || '').replace(/(\\d{3})(\\d{3})(\\d{4})/, '$1-$2-$3')}) - period ${period.from} to ${period.to}.`,\n  `Read only: nothing was changed in Google Ads to make this report. Generated ${new Date().toISOString().slice(0, 10)}.`,\n  '',\n  '## Summary',\n  '',\n  `- Spend: ${m(totalCost)} over ${campaigns.length} campaign(s) with spend`,\n  `- Clicks: ${totalClicks.toLocaleString('en-US')}; conversions: ${Math.round(totalConv * 100) / 100}`,\n  `- Calls: ${n(calls.total)} (${n(calls.over_90s)} of 90 seconds or more, ${n(calls.missed)} missed)`,\n  `- Issues found: ${issues.filter((i) => i.severity === 'high').length} high, ${issues.filter((i) => i.severity === 'medium').length} medium, ${issues.filter((i) => i.severity === 'low').length} low`,\n  '',\n  '## Issues found',\n  '',\n  ...(issues.length ? issues.map((i) => `- **${i.severity}** - ${i.text}`) : ['- Nothing stood out.']),\n  '',\n  '## Account settings',\n  '',\n  table(['Setting', 'Value'], [\n    ['Currency / time zone', `${cur} / ${a.time_zone || ''}`],\n    ['Auto-tagging', a.auto_tagging ? 'on' : 'off'],\n    ['Call reporting', a.call_reporting ? 'on' : 'off'],\n    ['Call conversion reporting', a.call_conversion_reporting ? 'on' : 'off'],\n    ['Conversion tracking', a.conversion_tracking_status || 'unknown'],\n    ['Enhanced conversions for leads', a.enhanced_conversions_for_leads ? 'on' : 'off'],\n    ['Test account', a.is_test_account ? 'yes' : 'no'],\n  ]),\n  '',\n  '## Campaigns (last 90 days)',\n  '',\n  table(['Campaign', 'Status', 'Bidding', 'Budget/day', 'Cost', 'Clicks', 'Conv.', 'Search IS', 'Lost IS (budget)', 'Locations', 'Schedule slots'],\n    campaigns.map((c) => [c.name, c.status, c.bidding, m(c.daily_budget), m(c.cost), c.clicks, c.conversions, pct(c.search_is), pct(c.budget_lost_is), c.locations || 'none', c.schedule_slots || '24/7'])),\n  ...((d.campaigns_without_spend || []).length ? ['', `Campaigns with no spend in the period: ${d.campaigns_without_spend.map((c) => `${c.name} (${c.status})`).join(', ')}.`] : []),\n  '',\n  '## Conversion tracking',\n  '',\n  table(['Action', 'Type', 'Status', 'Primary', 'Counting', 'Call seconds', 'Last conversion'],\n    conv.map((c) => [c.name, c.type, c.status, c.primary ? 'yes' : 'no', c.counting, c.call_seconds ?? '', c.last_conversion || 'never'])),\n  '',\n  '## Keywords',\n  '',\n  `${n(kw.count)} active keywords, average Quality Score ${kw.avg_quality_score ?? 'n/a'}, ${n(kw.low_quality)} below 5. By match type: ${Object.entries(kw.by_match_type || {}).map(([k, x]) => `${k.toLowerCase()} ${x}`).join(', ') || 'none'}.`,\n  '',\n  '## Search terms (last 90 days)',\n  '',\n  'Top terms by cost:',\n  '',\n  table(['Term', 'Cost', 'Clicks', 'Conv.', 'Already negative'], (d.search_terms_top || []).map((t) => [t.term, m(t.cost), t.clicks, t.conversions, t.negated ? 'yes' : 'no'])),\n  '',\n  'Terms with spend and no conversions (candidates for the negative list):',\n  '',\n  table(['Term', 'Cost', 'Clicks'], (d.search_terms_wasted || []).map((t) => [t.term, m(t.cost), t.clicks])),\n  '',\n  `Terms containing a person's name are not shown or stored (${n(d.search_terms_name_filtered && d.search_terms_name_filtered.rows)} daily rows, ${m(d.search_terms_name_filtered && d.search_terms_name_filtered.cost)}).`,\n  '',\n  '## Negative keywords',\n  '',\n  `Campaign level ${n(d.negatives && d.negatives.campaign_level)}, ad group level ${n(d.negatives && d.negatives.ad_group_level)}, shared lists ${n(d.negatives && d.negatives.shared_list_level)}.`,\n  '',\n  table(['Shared list', 'Keywords', 'Campaigns using it'], (d.shared_lists || []).map((l) => [l.name, l.members, l.campaigns])),\n  '',\n  '## Ads and assets',\n  '',\n  `${n(d.ads && d.ads.count)} enabled ads, ${n(d.ads && d.ads.disapproved)} disapproved, ${n(d.ads && d.ads.limited)} limited. Ad strength: ${Object.entries((d.ads && d.ads.by_strength) || {}).map(([k, x]) => `${k.toLowerCase()} ${x}`).join(', ') || 'n/a'}.`,\n  `Assets: ${Object.entries(d.assets || {}).map(([k, x]) => `${k.toLowerCase()} ${x}`).join(', ') || 'none'}.`,\n  '',\n  '## Location',\n  '',\n  `Spend on people in the area: ${m(geo.presence_cost)}. Spend on people only interested in the area: ${m(geo.interest_cost)}.`,\n  '',\n  '## Open Google recommendations',\n  '',\n  ...((d.recommendations || []).length ? d.recommendations.map((r) => `- ${String(r.type).toLowerCase().replace(/_/g, ' ')}${n(r.est_extra_conversions) ? ` (est. +${r.est_extra_conversions} conversions)` : ''}`) : ['- None.']),\n  '',\n  '## Change history (last 30 days)',\n  '',\n  Object.entries(d.changes_30d || {}).map(([k, x]) => `- ${k.toLowerCase().replace(/_/g, ' ')}: ${x}`).join('\\n') || '- No changes.',\n  '',\n].join('\\n').replace(/[–—]/g, '-');\n\nreturn [{\n  json: {\n    ok: true,\n    row: {\n      client_id: v.client_id,\n      customer_id: v.customer_id,\n      period_from: period.from,\n      period_to: period.to,\n      summary: {\n        cost: Math.round(totalCost * 100) / 100, currency: cur, clicks: totalClicks,\n        conversions: Math.round(totalConv * 100) / 100, calls: n(calls.total), calls_90s: n(calls.over_90s),\n        issues: issues.length, issues_high: issues.filter((i) => i.severity === 'high').length, issue_list: issues,\n      },\n      markdown: md,\n      status: 'draft',\n      created_by: user.user_id,\n    },\n  },\n}];\n"
       }
     },
     {
-      "id": "6e82aa04-653b-44e9-bda4-61b2f8b55520",
+      "id": "a2d0cbc0-52ee-4b92-b469-188884d26b14",
+      "name": "Audit written?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        -200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "6718a46a-6840-4b8b-8f61-5d6cdfd0bbec",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c9408a97-bcdc-4b94-aa52-05312302f04c",
       "name": "Save audit",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3520,
-        -200
+        3740,
+        -400
       ],
       "parameters": {
         "method": "POST",
@@ -426,7 +467,14 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.row) }}",
-        "options": {}
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
       },
       "credentials": {
         "supabaseApi": {
@@ -436,20 +484,20 @@
       }
     },
     {
-      "id": "59aaca3e-d1d8-423f-ba86-e10c1f9445c7",
+      "id": "19f853c5-74c3-48b4-a439-9cad02d0c696",
       "name": "Audit result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3740,
-        -200
+        3960,
+        -400
       ],
       "parameters": {
-        "jsCode": "const row = $input.first().json;\nreturn [{ json: { status: 200, body: { ok: true, id: row.id, summary: row.summary } } }];"
+        "jsCode": "const r = $input.first().json || {};\nconst row = Array.isArray(r.body) ? r.body[0] : r.body;\nif (!(r.statusCode >= 200 && r.statusCode < 300) || !row || !row.id) {\n  const msg = (r.body && (r.body.message || r.body.details)) || 'status ' + r.statusCode;\n  return [{ json: { status: 500, body: { error: 'The audit was written but could not be saved: ' + String(msg).slice(0, 200) } } }];\n}\nreturn [{ json: { status: 200, body: { ok: true, id: row.id, summary: row.summary } } }];"
       }
     },
     {
-      "id": "935ff492-b7f5-40b1-a6bd-be773ade71ab",
+      "id": "df99a0d1-fa19-4ae7-89d2-570c68e7c271",
       "name": "Mark reviewed",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -485,7 +533,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "c7175b70-9bed-4e4e-a02e-52469b6599eb",
+      "id": "de458396-9530-4fd1-bad5-ca62c1f5db0a",
       "name": "Review result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -686,7 +734,25 @@
       "main": [
         [
           {
+            "node": "Audit written?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit written?": {
+      "main": [
+        [
+          {
             "node": "Save audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
             "type": "main",
             "index": 0
           }

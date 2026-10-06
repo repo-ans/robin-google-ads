@@ -41,8 +41,9 @@ Dashboard button -> n8n webhook (JWT + role check) -> Google Ads and/or Supabase
 
 1. **FF owns everything.** FF accounts, FF credentials, FF repo. No personal accounts. No IDs,
    URLs or credential names from the reference app (see PLAN.md section 9).
-2. **Google Ads writes only in three workflows**: ff-build-campaign, ff-apply-campaign-action,
-   ff-delete-campaign. Every other workflow may only call `googleAds:search`, `googleAds:searchStream`,
+2. **Google Ads writes only in four workflows**: ff-build-campaign, ff-apply-campaign-action (also adds negative
+   keywords), ff-delete-campaign, and ff-case-match (offline conversion uploads for the monthly case match, PDF task 6 -
+   added 2026-10-05, pending Rob's OK). Every other workflow may only call `googleAds:search`, `googleAds:searchStream`,
    `:generateKeywordHistoricalMetrics` and `geoTargetConstants:suggest` (checked by `scripts/check-n8n.mjs`).
 3. **Every write:** `rob_admin` only; a `validateOnly` call first; built PAUSED; allowed on a Google Ads test
    account, and on a live account only after `rob_admin` turns `clients.writes_enabled` on (test first);
@@ -88,6 +89,14 @@ Dashboard button -> n8n webhook (JWT + role check) -> Google Ads and/or Supabase
 - One account failing must not stop the others (per-account Loop Over Items, errors recorded in `sync_run_accounts`).
 - n8n workflows keep the reference's set and flow, one self-contained file each (no sub-workflows).
 - Put a DB unique constraint behind every "insert if not exists".
+
+## Claude Code and the FF team
+
+- `scripts/ff.mjs` is the only way scripts and skills (`.claude/skills/ff-*`) reach the data: your own login, reads
+  through RLS, actions through the n8n webhooks, Google Ads read only through `ff-gaql`. No service role key or Google
+  Ads secret on a laptop.
+- Never open, print or paste a case list. Pass its path to `scripts/ff.mjs case-match` only.
+- One-page runbook for the team: `docs/runbook.md`.
 
 ## Working agreement
 

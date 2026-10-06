@@ -4,7 +4,7 @@ import { N8nError } from "../../lib/n8n";
 import { useAsync } from "../../lib/useAsync";
 import { costPerConvMicros, ctr, dec, enumLabel, int, moneyMicros, pct } from "../../lib/format";
 import DataTable from "../DataTable";
-import { ErrorNote, Loading, Notice, Pill } from "../ui";
+import { Button, ConfirmDialog, ErrorNote, Loading, Notice, Pill, inputClass } from "../ui";
 import type { TabProps } from "./types";
 
 const DECISIONS: { id: "keep" | "block" | "ask_rob"; label: string }[] = [
@@ -19,6 +19,13 @@ const DECISIONS: { id: "keep" | "block" | "ask_rob"; label: string }[] = [
 export default function SearchTermsTab(p: TabProps) {
   const [filter, setFilter] = useState<"all" | "no_conv" | "untriaged">("all");
   const [msg, setMsg] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  // Rob only: terms picked to become negative keywords in Google Ads.
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [level, setLevel] = useState<"campaign" | "list">("list");
+  const [matchType, setMatchType] = useState<"PHRASE" | "EXACT">("PHRASE");
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
   const { data, error, loading, setData } = useAsync(
     () => rpc<SearchTermRow>("dash_search_terms", { p_customer_id: p.customerId, p_campaign_id: p.campaignId, p_from: p.range.from, p_to: p.range.to }),
     [p.customerId, p.campaignId, p.range.from, p.range.to],
@@ -33,6 +40,30 @@ export default function SearchTermsTab(p: TabProps) {
       setMsg(e instanceof N8nError ? e.message : "Could not save the decision.");
     }
   }
+
+  async function addNegatives() {
+    setBusy(true);
+    setMsg(null);
+    setDone(null);
+    try {
+      const r = await actions.addNegatives({ campaign_row_id: p.campaignRowId, level, match_type: matchType, terms: [...picked] });
+      setDone(`Added ${r.added} negative keyword(s)${r.skipped ? ` (${r.skipped} were already there)` : ""}. They show as "Already negative" after the next sync.`);
+      setPicked(new Set());
+    } catch (e) {
+      setMsg(e instanceof N8nError ? e.message : "Could not add the negative keywords.");
+    } finally {
+      setBusy(false);
+      setConfirming(false);
+    }
+  }
+  const canPick = (r: SearchTermRow) => p.isRob && !r.name_filtered && !r.is_negated && r.status !== "EXCLUDED";
+  const togglePick = (term: string) =>
+    setPicked((s) => {
+      const next = new Set(s);
+      if (next.has(term)) next.delete(term);
+      else if (next.size < 50) next.add(term);
+      return next;
+    });
 
   if (error) return <ErrorNote message={error} />;
   if (loading && !data) return <Loading />;
@@ -51,6 +82,22 @@ export default function SearchTermsTab(p: TabProps) {
         </Notice>
       )}
       {msg && <ErrorNote message={msg} />}
+      {done && <Notice tone="info">{done}</Notice>}
+      {p.isRob && (
+        <div className="no-print flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface p-3 text-sm">
+          <span className="font-semibold">{picked.size} term(s) picked</span>
+          <select className={inputClass + " w-auto"} value={level} onChange={(e) => setLevel(e.target.value as typeof level)} aria-label="Add to">
+            <option value="list">FF Universal Negatives list (all campaigns that use it)</option>
+            <option value="campaign">This campaign only</option>
+          </select>
+          <select className={inputClass + " w-auto"} value={matchType} onChange={(e) => setMatchType(e.target.value as typeof matchType)} aria-label="Match type">
+            <option value="PHRASE">Phrase match</option>
+            <option value="EXACT">Exact match</option>
+          </select>
+          <Button variant="primary" disabled={picked.size === 0 || busy} onClick={() => setConfirming(true)}>Add as negative</Button>
+          {picked.size > 0 && <Button onClick={() => setPicked(new Set())}>Clear</Button>}
+        </div>
+      )}
       <DataTable
         rows={rows}
         rowKey={(r) => `${r.term_hash}-${r.ad_group_id}`}
@@ -66,6 +113,12 @@ export default function SearchTermsTab(p: TabProps) {
           </select>
         }
         columns={[
+          ...(p.isRob ? [{
+            key: "pick", label: "Pick", noCsv: true, noPrint: true, value: () => null,
+            render: (r: SearchTermRow) => canPick(r)
+              ? <input type="checkbox" checked={picked.has(r.search_term)} onChange={() => togglePick(r.search_term)} aria-label={`Pick ${r.search_term}`} />
+              : null,
+          }] : []),
           {
             key: "term", label: "Search term", value: (r) => r.search_term,
             render: (r) => (
@@ -105,7 +158,23 @@ export default function SearchTermsTab(p: TabProps) {
           },
         ]}
       />
-      {p.agency && <p className="text-xs text-ink-subtle">"Block" records the decision for the weekly review. Adding the negative in Google Ads is done by Rob.</p>}
+      {p.agency && <p className="text-xs text-ink-subtle">"Block" records the decision for the weekly review. Rob picks terms and uses "Add as negative" to add them in Google Ads (checked by Google first, logged).</p>}
+      {confirming && (
+        <ConfirmDialog
+          title={`Add ${picked.size} negative keyword(s)?`}
+          message={
+            <div className="space-y-2">
+              <p>{level === "list" ? 'They go on the "FF Universal Negatives" list, so every campaign that uses the list stops showing for them.' : "They are added to this campaign only."} Match type: {matchType.toLowerCase()}.</p>
+              <p className="text-xs">{[...picked].join(", ")}</p>
+              <p className="text-xs">Google checks the change first. Every attempt is logged.</p>
+            </div>
+          }
+          confirmLabel="Add in Google Ads"
+          busy={busy}
+          onCancel={() => setConfirming(false)}
+          onConfirm={addNegatives}
+        />
+      )}
     </div>
   );
 }

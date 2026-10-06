@@ -92,6 +92,8 @@ begin
       values (cid, '70', date_trunc('week', current_date)::date - 7, 'Calls 90s+');
     insert into public.weekly_stats (client_id, week_start, week_end, cost_micros)
       values (cl, date_trunc('week', current_date)::date - 7, date_trunc('week', current_date)::date - 1, 5000000);
+    insert into public.case_match_runs (client_id, customer_id, month, validate_only, cases_in, accepted, status)
+      values (cl, cid, date_trunc('month', current_date)::date, false, 3, 2, 'partial');
 
     insert into public.client_messages (id, client_id, direction, body)
       values (case cid when '1111111111' then 'cccccccc-0000-0000-0000-00000000000a'::uuid
@@ -307,6 +309,7 @@ from unnest(array[
   'ff_audit_data(''1111111111'')',
   'ff_keyword_research_targets(null)',
   'ff_weekly_report(current_date, null)',
+  'ff_case_match_context(''aaaaaaaa-0000-0000-0000-000000000001'', ''1111111111'')',
   'ff_google_ads_secrets()',
   'ff_set_google_ads_secrets(''{}''::jsonb, null)'
 ]) f;

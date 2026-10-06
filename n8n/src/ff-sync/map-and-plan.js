@@ -143,6 +143,15 @@ function assetRow(level, scopeId, link = {}, a = {}, campaignId, adGroupId) {
   };
 }
 
+// conversion_action.tag_snippets -> "AW-123456789/AbCd" (the gtag send_to value), or null.
+function sendTo(snippets) {
+  for (const t of snippets || []) {
+    const m = /send_to['"]?\s*:\s*['"](AW-[0-9]+\/[A-Za-z0-9_-]+)['"]/.exec(String(t.eventSnippet || ''));
+    if (m) return m[1];
+  }
+  return null;
+}
+
 const MAP = {
   customer: (r) => {
     const c = r.customer || {};
@@ -307,7 +316,9 @@ const MAP = {
       default_value: numOrNull(vs.defaultValue), always_use_default_value: Boolean(vs.alwaysUseDefaultValue),
       click_lookback_days: numOrNull(ca.clickThroughLookbackWindowDays),
       phone_call_duration_seconds: numOrNull(ca.phoneCallDurationSeconds),
-      attribution_model: (ca.attributionModelSettings || {}).attributionModel || null, removed_at: null, synced_at: ts,
+      attribution_model: (ca.attributionModelSettings || {}).attributionModel || null,
+      // The AW-.../label value the website script needs (shown on the client page).
+      tag_send_to: sendTo(ca.tagSnippets), removed_at: null, synced_at: ts,
     }]];
   },
 

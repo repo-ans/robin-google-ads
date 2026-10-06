@@ -277,7 +277,9 @@ no personal data), `tracking_health` (weekly snapshot of each conversion action)
 n8n-only `ff_weekly_report()`. Website click id script `web/public/ff-click-id.js` and the GHL / Google Ads setup steps
 in `docs/tracking-setup.md`.
 
-Still to come: `case_match_runs` (counts only) and Process 2 purchase tracking. See 12.
+Built 2026-10-05 (migration 20261005000002): `case_match_runs` (counts only - the list itself is never stored),
+`ff_case_match_context()`, and `ff_action_context()` for source `negatives`. Process 2 purchase and "arrangement
+started" tracking in `web/public/ff-click-id.js` (docs/tracking-setup.md section 6). Case match steps: section 7.
 
 ---
 
@@ -676,6 +678,8 @@ Each reference workflow maps to one FF workflow of the same shape.
 | `ff-delete-campaign` | `delete-campaign` | `/ff/delete-campaign` | rob_admin | write (remove) | Inactive until Phase 6 |
 | `ff-dataforseo` | new | Weekly schedule + `/ff/dataforseo-refresh` | ff_staff, rob_admin | none | Phase 7 |
 | `ff-weekly-report` | new (PDF task 8) | Monday 08:00 + `/ff/weekly-report` - fills `weekly_stats` and `tracking_health` from `ff_weekly_report()`, counts GHL leads tagged "from google ads" (count only), writes one row to the client's Google Sheet, Slack note to Rob (schedule only, or `slack: true`). Keeps no execution data (the GHL answer can hold a contact) | ff_staff, rob_admin | none | Built 2026-10-02 |
+| `ff-case-match` | new (PDF task 6) | `/ff/case-match` - check (validateOnly) or upload the no-name monthly case list as offline conversions: click ids, hashed email/phone (enhanced conversions for leads), call conversions. Counts to `case_match_runs`, summaries to `write_log`. Keeps no execution data | check: ff_staff, rob_admin; upload: rob_admin | write (uploads) | Built 2026-10-05 |
+| `ff-gaql` | new (PDF task 1) | `/ff/gaql` - one read-only GAQL query for Claude Code (`scripts/ff.mjs gaql`) and staff. Caller phone fields refused; search terms name-filtered; no execution data | ff_staff, rob_admin | none | Built 2026-10-05 |
 | `ff-ghl-setup` | new (PDF task 3) | `/ff/ghl-setup` - `list_locations` (sub-account picker on Edit client), `check` / `setup`: the FF GHL key reaches the client's location; creates the contact fields gclid, gbraid, wbraid, utm_* and the tag "from google ads" if missing. Nothing else in GHL changes | ff_staff, rob_admin | none | Built 2026-10-02 |
 
 Carried over from the reference notes: explicit response modes; `.first()` for singletons; key-based matching;
@@ -824,11 +828,11 @@ For Rob:
 1. **Search term name filter (5.4).** OK to replace any name-bearing term with `[name removed - <intent>]` before storage, and accept that a few harmless terms get removed too?
 2. **Client Suggestions.** May a `client_viewer` post messages in the Client Suggestions thread? This writes a row, via n8n. The alternative is pure read-only for clients, which drops the tab for them.
 3. **Removed campaigns.** Keep their history (soft remove) rather than deleting it, as planned?
-4. From the PDF, still open: pilots (McCall Gardens for Process 1; who for Process 2), who collects the monthly case list, who runs case match after handoff, whether 90s is the right call threshold, and whether the Netlify and Supabase accounts are FF-owned from day one.
+4. From the PDF, still open: pilots (McCall Gardens for Process 1; who for Process 2), who collects the monthly case list, who runs case match after handoff, and whether the Netlify and Supabase accounts are FF-owned from day one. 90 seconds is confirmed as the call threshold (2026-10-05).
 
 For Manam:
 5. **LLM provider and model** for the FF credential (the reference uses OpenAI `gpt-5-mini`).
-6. **PDF tasks outside Phases 1-7:** call asset and 90s call tracking setup, GHL form with GCLID, monthly case match, Process 2 purchase tracking, Monday Slack note / `weekly_stats`, and the 8 Claude Code skills. Add them as Phases 8+ after Phase 7, or fit them into earlier phases?
+6. ~~PDF tasks outside Phases 1-7~~ - all built (2026-10-02 and 2026-10-05). Still for Rob: OK to let ff-case-match upload (a fourth Google Ads write workflow, same guards); who collects the case lists; the Process 2 pilot and its checkout.
 7. **FF n8n instance:** is `$env` / n8n Variables available, and can the HTTP Request node use a Google Ads OAuth2 credential there? This decides 3.5 option A or B.
 8. **FF time zone** for the 06:00 schedule and for "yesterday" in alerts.
 9. **Google Ads test account:** does FF already have a test manager account + test client account for Phase 6?

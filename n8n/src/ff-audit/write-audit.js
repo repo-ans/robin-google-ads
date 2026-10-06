@@ -5,7 +5,15 @@
 const v = $('Validate input').first().json;
 const acctRow = $('Get account').first().json || {};
 const user = $('Auth: check role').first().json.user;
-const d = $input.first().json || {};
+// "Get audit data" has full response + never error on, so a database failure
+// (for example a statement timeout) arrives here as data.
+const res = $input.first().json || {};
+if (!(res.statusCode >= 200 && res.statusCode < 300) || !res.body || typeof res.body !== 'object') {
+  const b = res.body || {};
+  const why = (b && (b.message || b.details)) || (res.error && res.error.message) || `status ${res.statusCode}`;
+  return [{ json: { ok: false, status: 500, body: { error: `Could not read the account data for the audit: ${String(why).slice(0, 200)}` } } }];
+}
+const d = res.body;
 const a = d.account || {};
 const cur = a.currency || '';
 const period = d.period || {};
@@ -145,6 +153,7 @@ const md = [
 
 return [{
   json: {
+    ok: true,
     row: {
       client_id: v.client_id,
       customer_id: v.customer_id,

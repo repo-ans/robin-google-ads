@@ -1,6 +1,6 @@
 # Tracking setup - calls 90s+, preplanning forms, weekly report
 
-For: Manam (build), Arni (WordPress), Nerlyn (GHL), Rob (approves). One client at a time, pilot first (McCall Gardens).
+For: Manam (build), Arni (WordPress), Nerlyn (GHL), Rob (approves). Works the same for every client account, now and future.
 Covers PDF tasks 2 (calls), 3 (forms) and 8 (weekly report). Rules that apply throughout: FF owns every account,
 nothing personal in tags, URLs or notifications, no call recording, whisper or phone menu, plain hyphens, no emoji.
 
@@ -116,26 +116,81 @@ adds them to the GHL form, fires the form conversion once on the thank-you page,
 tracking. It stores nothing personal. Check on a live page: open the site with `?gclid=TEST123`, then in the browser
 console run `ffClickIds()` - it shows `gclid: "TEST123"`.
 
-## 4. Google Ads conversion actions (Manam, Rob approves; FF account)
+## 4. Call tracking in Google Ads (one click per account, Rob)
 
-| Action | Type | Settings |
-|---|---|---|
-| Calls from ads 90s+ | Phone calls > Calls from ads using call assets | Call length 90 seconds, count One, primary |
-| Calls from website 90s+ | Phone calls > Calls to a phone number on your website | Call length 90 seconds, count One, primary - its label goes in `data-phone-conversion` |
-| Preplanning form | Website > Submit lead form (manual, thank-you page) | Count One, primary - its label goes in `data-form-conversion` |
+Dashboard > client > **Call tracking** shows every Google Ads account of the client with a checklist from the last
+sync. When something is missing, Rob presses **Set up call tracking**. Only the missing parts are changed, each checked
+by Google first (validateOnly) and logged:
 
-- Account settings: auto-tagging ON, call reporting ON (the weekly report flags both if off).
-- Call asset on campaigns A and C with the business number, call reporting on. Google forwarding numbers pass the
-  caller's real number through to the funeral home, and calls ring straight through - no recording, no menu.
-- These are changes in Google Ads made by hand by FF in the FF account, not by the dashboard. Rob approves.
+| Part | What the button does |
+|---|---|
+| Account settings | Call reporting on, call conversion reporting on, auto-tagging on |
+| Calls from ads 90s+ | Creates it (AD_CALL, 90 seconds, count One, primary, value = the client's case value), or fixes ours if it is not at 90s |
+| Calls from website 90s+ | Same, type WEBSITE_CALL - its `AW-.../label` value reaches the dashboard with the next sync |
+| Call asset | One call asset with the business phone on the whole account, so every campaign shows it - also campaigns built later. Uses the client's Business phone, or the number already on a call asset in the account |
+
+Nothing records calls, and there is no menu or message: calls ring straight through, and Google's forwarding number
+passes the family's real number to the funeral home. Live accounts need "Google Ads writes" turned on for the client
+first (test account first).
+
+After the next sync, **Copy website script** on the same card gives the exact script for the client's site (Google tag,
+`data-phone-conversion`, `data-phone`, and `data-form-conversion` when a lead form action exists) - Arni pastes it in
+the site footer (section 3).
+
+The preplanning form action (Website > Submit lead form, thank-you page) is still made in Google Ads; its value then
+appears in the copied script by itself.
 
 ## 5. Test and proof (one of each)
 
 | Test | Pass when | Proof |
 |---|---|---|
 | Ad call | Call the number on the ad from a phone, stay 2 minutes | Shows in Google Ads > Goals > Conversions (can take a few hours) - screenshot |
-| Website call | Open the site from an ad click (or `?gclid=TEST...`), call the shown number, stay 2 minutes | Google forwarding number shown, call counted - screenshot |
+| Website call | Click the real ad (a test `?gclid=` does not make Google show its forwarding number), then call the number shown on the site, stay 2 minutes | Google forwarding number shown, call counted - screenshot |
 | Form | Open the site with `?gclid=TEST123&utm_source=google`, leave, come back without it, fill the form | Contact in GHL has gclid TEST123 and tag `from google ads`; funeral home gets the SMS and email within a minute, with no name in them; thank-you page fired the conversion (Tag Assistant recording) |
 | Weekly report | Client page > Weekly report > Run for last week | Row on the client page, row in the Sheet's Weekly tab; Monday note in Slack after the first scheduled run |
 
 Delete the test contact in GHL afterwards.
+
+## 6. Online cremation sales (Process 2 - Arni with the checkout owner, Manam)
+
+Goal: a paid arrangement counts once in Google Ads, after the payment is confirmed, with its real amount and order id.
+An "arrangement started" event counts the start of the flow.
+
+1. Flow map first (Arni): which page starts the arrangement, which system takes the payment (WooCommerce, GHL order
+   form, Stripe checkout, other), and which page the family sees **only after** a confirmed payment. Write the three
+   addresses down. The confirmation page must not be reachable without paying (no direct link in menus).
+2. Google Ads conversion actions (section 4 style, by hand): "Arrangement started" (Begin checkout, count One,
+   secondary) and "Online arrangement paid" (Purchase, count Every, transaction-specific value, primary).
+3. The confirmation page must give the script the amount and the order id - one of:
+   - the checkout code calls `window.ffPurchase({ value: 1995, order_id: 'A-1234', currency: 'USD' })` after payment
+     (before the script has loaded: `(window.ffPurchaseQueue = window.ffPurchaseQueue || []).push({...})`);
+   - the confirmation address carries them, e.g. `/order-confirmed?total=1995&order=A-1234`
+     (then set `data-purchase-value-param="total"` and `data-purchase-order-param="order"`);
+   - the page has `<span data-ff-purchase-value="1995" data-ff-order-id="A-1234" hidden></span>`.
+   Never put the family's name or email in the address or on these elements.
+4. Add to the script tag from section 3:
+
+   ```html
+   data-start-conversion="AW-XXXXXXXXX/start-label" data-start-path="/arrange"
+   data-purchase-conversion="AW-XXXXXXXXX/purchase-label" data-purchase-path="/order-confirmed"
+   data-currency="USD"
+   ```
+
+   The script sends the purchase once per order id (Google also drops a repeat with the same transaction id), only on
+   the confirmation page, and never without an amount and an order id.
+5. Test (milestone M4): one real test arrangement end to end. Pass when Tag Assistant shows one purchase with the right
+   value and order id, a page reload sends nothing more, and Google Ads > Goals shows it within a few hours. Refund the
+   test order.
+
+## 7. Monthly case match (Maggie or DeAnn collect, Rob uploads)
+
+1. Google Ads conversion actions (by hand, once per account): **FF - Signed case** (Import > CRM / clicks, count One,
+   primary) and **FF - Signed case call** (Import > calls). The names must match exactly - ff-case-match finds them by name.
+2. Each month the funeral home sends the signed cases of last month. Build the CSV with only these columns - no names:
+   `case_date, value, gclid, gbraid, wbraid, email, phone, call_time` (template: dashboard > client > Case match >
+   Download template). gclid/gbraid/wbraid come from the GHL contact; email/phone are hashed before they reach Google;
+   call_time (YYYY-MM-DD HH:MM) with phone matches calls from ads.
+3. Dashboard > client > Case match: choose the month and the file, **Check with Google Ads** (FF staff or Rob - nothing is
+   recorded), then Rob presses **Upload to Google Ads**. Or with Claude Code: `/ff-case-match`.
+4. Delete the file everywhere (email, downloads) after the upload. Supabase keeps counts only (`case_match_runs`).
+5. Proof (milestone M3): the run in the Case match history and the conversions visible in Google Ads > Goals.

@@ -163,7 +163,7 @@ const Q = {
     conversion_action.value_settings.default_value, conversion_action.value_settings.always_use_default_value,
     conversion_action.click_through_lookback_window_days,
     conversion_action.phone_call_duration_seconds,
-    conversion_action.attribution_model_settings.attribution_model
+    conversion_action.attribution_model_settings.attribution_model, conversion_action.tag_snippets
     FROM conversion_action WHERE conversion_action.status != 'REMOVED'`,
 
   recommendations: `SELECT recommendation.resource_name, recommendation.type, recommendation.campaign,

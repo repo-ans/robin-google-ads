@@ -12,10 +12,11 @@ Dashboard button -> n8n webhook (JWT + role check) -> Google Ads and/or Supabase
 |---|---|
 | `web/` | React + Vite + TypeScript dashboard (Netlify) |
 | `supabase/` | Migrations and RLS tests |
-| `n8n/` | 16 n8n workflow exports (`ff-*.json`), generated from `n8n/src/` |
-| `scripts/` | n8n build and checks, Code node tests, DB and auth tests |
+| `n8n/` | 18 n8n workflow exports (`ff-*.json`), generated from `n8n/src/` |
+| `scripts/` | n8n build and checks, Code node tests, DB and auth tests, and `ff.mjs` (the FF command line for Claude Code) |
+| `.claude/skills/` | The 8 Claude Code skills: /ff-audit, /ff-build-campaign, /ff-negatives, /ff-conversions-setup, /ff-tracking-check, /ff-case-match, /ff-weekly, /ff-monthly |
 | `audits/` | Audit reports downloaded from the dashboard (`<client-slug>.md`) |
-| `docs/` | `tracking-setup.md` - calls 90s+, the GHL preplanning form, the website script and the weekly report, step by step |
+| `docs/` | `tracking-setup.md` - calls 90s+, the GHL preplanning form, the website script, online cremation purchase, the weekly report and the case match, step by step. `runbook.md` - one page for the FF team |
 
 ## 1. Supabase (FF project)
 
@@ -77,7 +78,9 @@ In every workflow:
 | ff-campaign-chat | Campaign Assistant | staff |
 | ff-client-message | Client suggestions + AI draft | clients (own client), staff |
 | ff-send-reply | Send the edited reply | staff |
-| ff-apply-campaign-action | Confirm & Apply (budget / pause / resume) | Rob |
+| ff-apply-campaign-action | Confirm & Apply (budget / pause / resume), add negative keywords (Search Terms tab) | Rob |
+| ff-case-match | Monthly case match: check (staff) or upload (Rob) signed cases as offline conversions; counts only | staff / Rob |
+| ff-gaql | One read-only Google Ads query (Claude Code: `node scripts/ff.mjs gaql`) | staff |
 | ff-build-campaign | Drafts (staff), build PAUSED campaign (Rob) | staff / Rob |
 | ff-delete-campaign | Remove a campaign | Rob |
 | ff-client-admin | Clients, account assignment, logins, write switch | staff (Rob for staff logins and writes) |
@@ -88,7 +91,7 @@ In every workflow:
 | ff-weekly-report | Monday 08:00: weekly_stats + tracking_health, GHL lead count, client Google Sheet row, Slack note to Rob. Also "Run for last week" on the client page (no Slack) | schedule; staff |
 | ff-ghl-setup | Pick from GHL (Edit client: lists the sub-accounts), Check GHL / Set up GHL fields (client page): gclid, gbraid, wbraid, utm_* fields and the "from google ads" tag | staff |
 
-**Google Ads writes** (build, apply, remove): Rob only, `validateOnly` first, created PAUSED, logged in `write_log`.
+**Google Ads writes** (build, apply, negatives, remove, case upload): Rob only, `validateOnly` first, created PAUSED, logged in `write_log`.
 They run on a Google Ads **test account** at any time; on a live account only after Rob turns
 "Google Ads writes" on for that client (client page).
 

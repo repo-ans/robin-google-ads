@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { actions, type AdAccount, type Audit } from "../lib/api";
-import { N8nError } from "../lib/n8n";
 import { useAuth } from "../lib/auth";
 import { useAsync } from "../lib/useAsync";
 import { customerId, date, dateTime, money } from "../lib/format";
@@ -42,10 +41,10 @@ export default function AuditPage() {
     try {
       const r = await fn();
       setMessage(done);
-      if (r.id) setOpenId(r.id);
+      if (r?.id) setOpenId(r.id);
       reload();
     } catch (e) {
-      setMessage(e instanceof N8nError ? e.message : "Something went wrong.");
+      setMessage(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
       setBusy(false);
     }
@@ -77,7 +76,7 @@ export default function AuditPage() {
               <select className={inputClass + " max-w-xs"} value={chosen} onChange={(e) => setAccount(e.target.value)} aria-label="Account">
                 {data.accounts.map((a) => <option key={a.customer_id} value={a.customer_id}>{a.descriptive_name ?? customerId(a.customer_id)}</option>)}
               </select>
-              <Button variant="primary" disabled={busy || !chosen}
+              <Button variant="primary" disabled={busy || !chosen} className=""
                 onClick={() => run(() => actions.audit({ action: "generate", client_id: clientId, customer_id: chosen }), "Audit written.")}>
                 {busy ? "Working..." : "Generate audit"}
               </Button>

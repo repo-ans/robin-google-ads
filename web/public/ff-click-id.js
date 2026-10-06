@@ -6,7 +6,15 @@
  *     data-form-conversion="AW-123456789/AbCdEf"      (optional) form conversion, fired on the thank-you page
  *     data-thank-you-path="/thank-you-preplanning"     (optional) path of that page
  *     data-phone-conversion="AW-123456789/GhIjKl"      (optional) website call conversion (calls 90s+)
- *     data-phone="(843) 555-0100">                     (optional) the number shown on the site
+ *     data-phone="(843) 555-0100"                      (optional) the number shown on the site
+ *   Online cremation (Process 2), all optional:
+ *     data-start-conversion="AW-123456789/MnOpQr"      arrangement started (fires once per visit)
+ *     data-start-path="/arrange"                       the page where the arrangement starts
+ *     data-purchase-conversion="AW-123456789/StUvWx"   paid arrangement, with its real value and order id
+ *     data-purchase-path="/order-confirmed"            the confirmation page, shown only after a confirmed payment
+ *     data-purchase-value-param="total"                URL parameter holding the amount (default "value")
+ *     data-purchase-order-param="order"                URL parameter holding the order id (default "order_id")
+ *     data-currency="USD">                             (default USD)
  *   ...then the closing script tag. The same code can also be pasted inline
  *   (WPCode or the theme footer) inside a script tag - the data- settings then
  *   go on that tag.
@@ -21,6 +29,15 @@
  *   3. Optional: fires the form conversion once on the thank-you page, and turns
  *      on Google's website call tracking (Google shows its forwarding number in
  *      place of data-phone; calls ring straight through, no recording or menu).
+ *   4. Optional, online cremation: "arrangement started" once per visit, and the
+ *      purchase once per order, on the confirmation page only, with the real
+ *      amount and the order id (Google also drops a repeat with the same
+ *      transaction id). The amount and order id come from, first found:
+ *        - the checkout calling  window.ffPurchase({ value: 1995, order_id: 'A-1234', currency: 'USD' })
+ *          (or, before this script has loaded: (window.ffPurchaseQueue = window.ffPurchaseQueue || []).push({...}))
+ *        - the confirmation page address  ?value=1995&order_id=A-1234  (names set by the data-purchase-*-param options)
+ *        - an element on the page  <span data-ff-purchase-value="1995" data-ff-order-id="A-1234"></span>
+ *      No amount or no order id means no purchase is sent - it never guesses.
  *
  * Nothing personal is read or stored: only the click id and utm values. Needs the
  * Google tag (gtag.js) on the site for step 3 only. Plain hyphens, no emoji.
@@ -120,10 +137,63 @@
     window.gtag('config', sendTo, { phone_conversion_number: phone });
   }
 
+  // 4. Online cremation: arrangement started and purchase
+  var onPath = function (path) { return path && location.pathname.replace(/\/+$/, '') === path.replace(/\/+$/, ''); };
+  function startConversion() {
+    var sendTo = opt('start-conversion');
+    if (!sendTo || !onPath(opt('start-path')) || !gtagReady()) return;
+    var key = 'ff_start_conv_' + sendTo;
+    try { if (window.sessionStorage.getItem(key)) return; } catch (e) { /* ignore */ }
+    window.gtag('event', 'conversion', { send_to: sendTo });
+    try { window.sessionStorage.setItem(key, '1'); } catch (e) { /* ignore */ }
+  }
+  var purchaseSent = false;
+  function sendPurchase(p) {
+    var sendTo = opt('purchase-conversion');
+    if (purchaseSent || !sendTo || !gtagReady() || !p) return false;
+    var path = opt('purchase-path');
+    if (path && !onPath(path)) return false;
+    var value = Math.round(Number(String(p.value).replace(/[^0-9.]/g, '')) * 100) / 100;
+    var orderId = clean(String(p.order_id || '')).replace(/ /g, '').slice(0, 64);
+    if (!(value > 0) || !orderId) return false;
+    var key = 'ff_purchase_' + orderId;
+    try { if (window.localStorage.getItem(key)) return false; } catch (e) { /* ignore */ }
+    window.gtag('event', 'conversion', {
+      send_to: sendTo, value: value, currency: (p.currency || opt('currency') || 'USD').toUpperCase().slice(0, 3), transaction_id: orderId,
+    });
+    purchaseSent = true;
+    try { window.localStorage.setItem(key, String(Date.now())); } catch (e) { /* ignore */ }
+    return true;
+  }
+  function purchaseFromPage() {
+    if (!opt('purchase-conversion') || !opt('purchase-path') || !onPath(opt('purchase-path'))) return;
+    var params;
+    try { params = new URLSearchParams(location.search); } catch (e) { params = null; }
+    var fromUrl = params && {
+      value: params.get(opt('purchase-value-param') || 'value'),
+      order_id: params.get(opt('purchase-order-param') || 'order_id'),
+      currency: params.get('currency'),
+    };
+    if (fromUrl && fromUrl.value && fromUrl.order_id && sendPurchase(fromUrl)) return;
+    var el = document.querySelector('[data-ff-purchase-value][data-ff-order-id]');
+    if (el) sendPurchase({ value: el.getAttribute('data-ff-purchase-value'), order_id: el.getAttribute('data-ff-order-id'), currency: el.getAttribute('data-ff-currency') });
+  }
+  // For a checkout that knows the amount in JavaScript: call after the payment is confirmed.
+  window.ffPurchase = function (p) { return sendPurchase(p || {}); };
+  // A checkout that runs before this script can queue it: (window.ffPurchaseQueue = window.ffPurchaseQueue || []).push({...})
+  function drainQueue() {
+    var q = window.ffPurchaseQueue;
+    if (Array.isArray(q)) q.forEach(function (p) { sendPurchase(p); });
+    window.ffPurchaseQueue = { push: function (p) { return sendPurchase(p); } };
+  }
+
   function start() {
     fillAll();
     formConversion();
     phoneConversion();
+    startConversion();
+    purchaseFromPage();
+    drainQueue();
     if (window.MutationObserver && Object.keys(values).length) {
       new MutationObserver(function (records) {
         records.forEach(function (r) {

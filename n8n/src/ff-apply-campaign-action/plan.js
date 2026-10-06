@@ -12,7 +12,148 @@ const ctx = $input.first().json || {};
 
 const refuse = (status, error) => [{ json: { ok: false, status, error, ctx } }];
 
-if (!ctx.found) return refuse(404, 'That proposed change was not found.');
+if (!ctx.found) return refuse(404, v.source === 'negatives' ? 'That campaign was not found.' : 'That proposed change was not found.');
+
+// ---- Negative keywords from the Search Terms tab (PDF task 5)
+if (v.source === 'negatives') {
+  if (!ctx.is_test_account && !ctx.writes_enabled) {
+    return refuse(403, 'Writes are not turned on for this client yet. Test on the Google Ads test account first, then Rob can turn writes on in the client settings.');
+  }
+  const cid = ctx.customer_id;
+  const toList = v.level === 'list';
+  if (toList && !ctx.universal_list_id) {
+    return refuse(422, 'This account has no "FF Universal Negatives" list yet. Build a campaign with the campaign builder (it creates the list), or add to the campaign instead.');
+  }
+  const norm = (t) => String(t).toLowerCase().replace(/\s+/g, ' ').trim();
+  const existing = new Set(toList ? ctx.existing_list_negatives || [] : ctx.existing_campaign_negatives || []);
+  const fresh = v.terms.filter((t) => !existing.has(`${norm(t)}|${v.match_type}`));
+  const skipped = v.terms.length - fresh.length;
+  if (fresh.length === 0) return refuse(409, 'All of these are already negative keywords there.');
+  const keyword = (t) => ({ text: t, matchType: v.match_type });
+  const operations = toList
+    ? fresh.map((t) => ({ create: { sharedSet: `customers/${cid}/sharedSets/${ctx.universal_list_id}`, keyword: keyword(t) } }))
+    : fresh.map((t) => ({ create: { campaign: `customers/${cid}/campaigns/${ctx.campaign_id}`, negative: true, keyword: keyword(t) } }));
+  return [{
+    json: {
+      ok: true,
+      ctx,
+      action: { action_type: 'add_negatives', level: v.level, match_type: v.match_type, terms: fresh, skipped },
+      customer_id: cid,
+      login_customer_id: ctx.login_customer_id || null,
+      api_version: cfg.GOOGLE_ADS_API_VERSION,
+      url_suffix: toList ? 'sharedCriteria:mutate' : 'campaignCriteria:mutate',
+      mutate_body: { operations },
+      campaign_patch: null,
+      source: v.source,
+      source_id: v.source_id,
+    },
+  }];
+}
+
+// ---- Call tracking setup for one account (PDF task 2), any client, one click by Rob
+// Step A (this plan): account settings + the two 90-second call conversion actions.
+// Step B ("Plan call asset", after step A is applied): an account-level call asset
+// with the business number, counted by "Calls from ads 90s+". Account level means
+// every campaign shows it, including campaigns built later.
+if (v.source === 'tracking') {
+  if (!ctx.is_test_account && !ctx.writes_enabled) {
+    return refuse(403, 'Writes are not turned on for this client yet. Test on the Google Ads test account first, then Rob can turn writes on in the client settings.');
+  }
+  const t = ctx.tracking || {};
+  const cid = ctx.customer_id;
+  if (!t.last_synced_at) return refuse(409, 'Sync this account first, so the current settings are known.');
+
+  const digits = String(t.client_phone || t.asset_phone || '').replace(/\D/g, '');
+  const national = digits.length === 11 && digits[0] === '1' ? digits.slice(1) : digits;
+  const phone = national.length === 10 ? `(${national.slice(0, 3)}) ${national.slice(3, 6)}-${national.slice(6)}` : null;
+  // A call asset is needed only when no account-level one exists and some enabled
+  // search campaign has none of its own (campaign-level assets already count).
+  const needAsset = !Number(t.account_call_assets) && Number(t.search_campaigns_without_call_asset ?? 1) > 0;
+  // Business numbers here are US or Canada; the account currency tells them apart.
+  const countryCode = t.currency_code === 'CAD' ? 'CA' : 'US';
+  if (needAsset && !phone) return refuse(422, 'No business phone found - add the funeral home\'s number (US or Canada, 10 digits) under Edit client > Business phone.');
+
+  const steps = [];
+  const requestsA = [];
+  if (!t.call_reporting_enabled || !t.call_conversion_reporting_enabled || !t.auto_tagging_enabled) {
+    requestsA.push({
+      label: 'account',
+      url_suffix: ':mutate',
+      body: {
+        operation: {
+          update: {
+            resourceName: `customers/${cid}`,
+            autoTaggingEnabled: true,
+            callReportingSetting: { callReportingEnabled: true, callConversionReportingEnabled: true },
+          },
+          updateMask: 'autoTaggingEnabled,callReportingSetting.callReportingEnabled,callReportingSetting.callConversionReportingEnabled',
+        },
+      },
+    });
+    steps.push('Call reporting and auto-tagging turned on');
+  }
+
+  const actions = t.call_actions || [];
+  const value = t.case_value_micros ? Number(t.case_value_micros) / 1e6 : null;
+  const ops = [];
+  const opTypes = [];
+  let adCallAction = null;
+  for (const [type, name] of [['AD_CALL', 'Calls from ads 90s+'], ['WEBSITE_CALL', 'Calls from website 90s+']]) {
+    const good = actions.find((a) => a.type === type && a.status === 'ENABLED' && Number(a.seconds) === 90);
+    if (good) {
+      if (type === 'AD_CALL') adCallAction = `customers/${cid}/conversionActions/${good.id}`;
+      continue;
+    }
+    // The account already counts this kind of call (often at a shorter length):
+    // set those actions to 90 seconds instead of adding a second action, so one
+    // call is never counted twice.
+    const existing = actions.filter((a) => a.type === type && a.status === 'ENABLED');
+    const ours = actions.find((a) => a.type === type && a.name === name);
+    const toFix = existing.length ? existing : ours ? [ours] : [];
+    if (toFix.length) {
+      for (const a of toFix) {
+        ops.push({
+          update: { resourceName: `customers/${cid}/conversionActions/${a.id}`, status: 'ENABLED', phoneCallDurationSeconds: 90 },
+          updateMask: 'status,phoneCallDurationSeconds',
+        });
+        opTypes.push(type);
+        steps.push(`"${a.name}" now counts calls of 90 seconds or more (was ${a.seconds ?? 'the default'})`);
+      }
+      if (type === 'AD_CALL') adCallAction = `customers/${cid}/conversionActions/${toFix[0].id}`;
+      continue;
+    }
+    ops.push({
+      create: {
+        name, type, category: 'PHONE_CALL_LEAD', status: 'ENABLED', primaryForGoal: true,
+        countingType: 'ONE_PER_CLICK', phoneCallDurationSeconds: 90,
+        ...(value ? { valueSettings: { defaultValue: value, alwaysUseDefaultValue: true, ...(t.currency_code ? { defaultCurrencyCode: t.currency_code } : {}) } } : {}),
+      },
+    });
+    opTypes.push(type);
+    steps.push(`"${name}" created (90 seconds, primary)`);
+  }
+  if (ops.length) requestsA.push({ label: 'conversion_actions', url_suffix: '/conversionActions:mutate', op_types: opTypes, body: { operations: ops } });
+  if (needAsset) steps.push(`Call asset ${phone} added to the whole account (every campaign shows it)`);
+
+  if (!requestsA.length && !needAsset) return refuse(409, 'Call tracking is already set up for this account.');
+
+  return [{
+    json: {
+      ok: true,
+      ctx,
+      action: { action_type: 'setup_call_tracking', steps },
+      customer_id: cid,
+      login_customer_id: ctx.login_customer_id || null,
+      api_version: cfg.GOOGLE_ADS_API_VERSION,
+      mutate_body: { steps },
+      campaign_patch: null,
+      source: v.source,
+      source_id: v.source_id,
+      tracking: { requests_a: requestsA, ad_call_action: adCallAction, need_asset: needAsset, phone, country_code: countryCode },
+    },
+  }];
+}
+
 if (ctx.action_status !== 'proposed') return refuse(409, `This change is already ${ctx.action_status || 'closed'}.`);
 const action = normalizeAction(ctx.proposed_action);
 if (!action) return refuse(422, 'The proposed change is not one of the supported actions.');

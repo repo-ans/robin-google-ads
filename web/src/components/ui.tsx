@@ -23,7 +23,7 @@ export function Button({
     <button
       type="button"
       {...rest}
-      className={`no-print rounded-lg font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${sizing} ${VARIANTS[variant]} ${className}`}
+      className={`no-print rounded-lg font-semibold transition cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${sizing} ${VARIANTS[variant]} ${className}`}
     />
   );
 }

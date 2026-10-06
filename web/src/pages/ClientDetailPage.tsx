@@ -13,6 +13,7 @@ import DataTable from "../components/DataTable";
 import DateRangePicker from "../components/DateRangePicker";
 import ClientForm from "../components/ClientForm";
 import MessageThread from "../components/MessageThread";
+import CallTracking from "../components/CallTracking";
 import { Button, ConfirmDialog, ErrorNote, Notice, PageSkeleton, Pill, Section, StatCard, StatusPill, linkButtonClass } from "../components/ui";
 
 type TrackingFlag = { customer_id: string; name: string; last_conversion_date: string | null; flag_no_recent_conversions: boolean; flag_call_duration_not_90s: boolean; phone_call_duration_seconds: number | null };
@@ -101,6 +102,7 @@ export default function ClientDetailPage() {
             <Button size="sm" onClick={() => setEditing(true)}>Edit client</Button>
             <Link to={`/dashboard/clients/${clientId}/users`} className={linkButtonClass}>Client logins</Link>
             <Link to={`/dashboard/clients/${clientId}/audit`} className={linkButtonClass}>Audit</Link>
+            <Link to={`/dashboard/clients/${clientId}/case-match`} className={linkButtonClass}>Case match</Link>
             <Link to={`/dashboard/clients/${clientId}/builder`} className={linkButtonClass}>Campaign builder</Link>
             <Button size="sm" disabled={!!busy} onClick={() => act("kw", () => actions.keywordResearch(clientId), "Keyword research started. Volumes appear in the Keywords tab when it finishes.")}>
               Refresh keyword data
@@ -210,6 +212,8 @@ export default function ClientDetailPage() {
             </ul>
           )}
         </Section>
+
+        {agency && <CallTracking clientId={clientId} phone={client.phone} />}
 
         <Section
           title="Weekly report"

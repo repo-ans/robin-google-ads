@@ -2,7 +2,7 @@
   "name": "ff-client-message",
   "nodes": [
     {
-      "id": "99005fb5-ba85-4f65-917f-e89a6d201199",
+      "id": "ede8fc8a-a74e-4985-a362-49ce919e108b",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -22,7 +22,7 @@
       "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
     },
     {
-      "id": "849c51b7-4f96-43bf-a096-0b37bcef4d41",
+      "id": "7a62f0a3-25fc-44ac-b31f-e1b8ff483475",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -36,7 +36,7 @@
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
     },
     {
-      "id": "bd8d5577-064a-4f60-bced-2923a7c24471",
+      "id": "50cb82f7-e521-41b7-bf41-7b43e47ad87c",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -50,7 +50,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "8b2da133-687b-4243-9e8b-2d6b70368189",
+      "id": "4d65ef73-8db6-4b36-b11e-f8a2811db2fa",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -86,7 +86,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "fb218bb8-3c9d-48b9-bc37-84dde6d52b61",
+      "id": "dcf4bb28-936e-42c0-a6ff-ad6027514a5b",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -131,7 +131,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "01dc108c-3fbb-4d4d-96e5-62a2e0327dae",
+      "id": "0fce01a7-3ae2-4abe-afa3-b919b499a7c7",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -145,7 +145,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "d4bc5e91-770c-417d-813d-0d4ba091bce0",
+      "id": "ebe28edb-6e6c-4194-9114-0e93e859120c",
       "parameters": {
         "conditions": {
           "options": {
@@ -178,7 +178,7 @@
       ]
     },
     {
-      "id": "23b171db-df06-4742-8487-d007f3436a6a",
+      "id": "9c5a00ba-5deb-427d-82d8-2ea001e00c3b",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -196,7 +196,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "aa8f1df6-896b-4636-8a75-4bf5a2e27235",
+      "id": "7ded73bb-2857-493e-bc29-413a3f1095d8",
       "name": "Get campaign",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -220,7 +220,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "543bfd87-fcf6-44cc-b85c-deebd3caaf8d",
+      "id": "cc0dcfbc-4ad7-4cf8-9d9d-ae75cf337b45",
       "name": "Validate input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -233,7 +233,7 @@
       }
     },
     {
-      "id": "bc578b67-c540-453e-9589-d768e02bac65",
+      "id": "125561cc-83aa-4a26-988a-fe94dae947bc",
       "name": "Validate input ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -250,7 +250,7 @@
           },
           "conditions": [
             {
-              "id": "1d4d51d5-8dc3-4c93-8d0e-a695dfc1b7f1",
+              "id": "d0ec250e-ef6a-4c0a-a234-1c8f0b02d3d2",
               "leftValue": "={{ $json.valid === true }}",
               "rightValue": true,
               "operator": {
@@ -266,7 +266,7 @@
       }
     },
     {
-      "id": "1a2f416d-9a61-4d9f-9079-a62739a44e55",
+      "id": "56dff4c6-bf9d-4acc-8efe-5461f1462116",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -283,7 +283,7 @@
       }
     },
     {
-      "id": "e90ee518-04e1-477c-88e7-4d9481b1056d",
+      "id": "f3bfb8ee-09d5-4d79-97cf-a8f03a26c1d6",
       "name": "Save message",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -318,7 +318,7 @@
       }
     },
     {
-      "id": "bb499d15-65bc-4053-bc47-84abc8598355",
+      "id": "c267ec00-e279-44d2-b8a0-9fea725e7331",
       "name": "Get message context",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -344,7 +344,7 @@
       }
     },
     {
-      "id": "89367ef9-924e-4d65-a225-19ba3c47f518",
+      "id": "9e73a3f3-3b62-4386-982c-99739c3e6448",
       "name": "Build AI context",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -357,7 +357,7 @@
       }
     },
     {
-      "id": "8d34d751-872d-4baf-b426-9f984dcd3673",
+      "id": "74db3085-0da3-4bb3-bffc-1c355ac88c1d",
       "name": "Draft reply (AI Agent)",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 1.7,
@@ -377,7 +377,7 @@
       "notes": "onError continueRegularOutput: a malformed model output must not stop the workflow (reference lesson). The next Code node treats it as no answer."
     },
     {
-      "id": "32134509-b25c-4c77-8d3b-0d142d29bf5f",
+      "id": "c5eecd52-d644-41ee-840c-761a72501642",
       "name": "Draft reply (AI Agent) - OpenAI model",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.3,
@@ -401,7 +401,7 @@
       }
     },
     {
-      "id": "c4c74047-d75b-4fbd-9b8a-4ec016287418",
+      "id": "50f75281-7a9a-4ddf-95ad-a7007f935bd8",
       "name": "Draft reply (AI Agent) - output format",
       "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
       "typeVersion": 1.2,
@@ -415,7 +415,7 @@
       }
     },
     {
-      "id": "1dbf047d-a8a9-487d-b28a-158b5c01c92f",
+      "id": "80fadf1c-7329-4c99-b8c7-8880f0159050",
       "name": "Prepare draft",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -428,7 +428,7 @@
       }
     },
     {
-      "id": "c4893771-7d79-4d1c-a91e-147baaafd4fe",
+      "id": "b96d26a3-2941-40ed-850b-f04adfad6b91",
       "name": "Save draft",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -463,7 +463,7 @@
       }
     },
     {
-      "id": "c4977799-6207-4cee-bd06-bfeb08db9e7b",
+      "id": "34393de1-59a9-4ede-b0a5-108f35e3a4a5",
       "name": "Mark drafted",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -498,7 +498,7 @@
       }
     },
     {
-      "id": "0b1bf728-e6df-4f16-9a3b-38422261ca03",
+      "id": "b8169682-b016-4d7c-ae07-de0565037573",
       "name": "Message result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -511,7 +511,7 @@
       }
     },
     {
-      "id": "897999ab-b77d-4716-ad52-ab2908dc0ec7",
+      "id": "f631ed8e-e076-4a10-b8fd-3775c7450e08",
       "name": "Tell FF on Slack?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -528,7 +528,7 @@
           },
           "conditions": [
             {
-              "id": "4f690577-eb75-4ff4-9879-eca0a41413bc",
+              "id": "3514bef9-9fc9-4660-af13-14e24551f1f7",
               "leftValue": "={{ Boolean($('Config').first().json.SLACK_CHANNEL) }}",
               "rightValue": true,
               "operator": {
@@ -544,7 +544,7 @@
       }
     },
     {
-      "id": "24410630-7599-4697-a0bc-e89b9a85dca5",
+      "id": "71a80d2d-8170-46e1-aeca-4a0c5e4e993f",
       "name": "Notify FF",
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.2,

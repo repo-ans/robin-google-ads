@@ -37,6 +37,58 @@ if (!plan.ok) {
   return out(writes, { status: plan.status, body: { error: plan.error } });
 }
 
+// Google sign-in first: without an access token every call below is a 401.
+const token = ran('Refresh Google token');
+if (token && !token.access_token) {
+  const why = [token.error, token.error_description].filter(Boolean).join(' - ') || 'no access token';
+  return out([logWrite([logRow(true, 'failed', { error: `Google sign-in failed: ${why}` })])], {
+    status: 502,
+    body: { error: `Google sign-in failed (${why}). Open Settings > Test connection; if it fails, press Connect with Google again.` },
+  });
+}
+
+// ---- Call tracking setup: step A (one or two requests) and step B (call asset)
+if (plan.source === 'tracking') {
+  const ranAll = (name) => {
+    try {
+      return $(name).all();
+    } catch (e) {
+      return [];
+    }
+  };
+  const logs = [];
+  const errors = [];
+  const record = (node, isValidate, labelOf) => {
+    ranAll(node).forEach((item, i) => {
+      const err = gadsError(item.json);
+      const label = labelOf(i);
+      logs.push({ ...logRow(isValidate, err ? 'failed' : 'ok', err ? { error: err } : gadsBody(item.json)), request: { step: label } });
+      if (err) errors.push(`${label}: ${err}`);
+    });
+  };
+  const labelA = (node) => (i) => {
+    try {
+      return $(node).itemMatching(i).json.label;
+    } catch (e) {
+      return 'step A';
+    }
+  };
+  record('Validate tracking', true, labelA('Tracking: requests'));
+  record('Apply tracking', false, labelA('Tracking: real requests'));
+  record('Validate call asset', true, () => 'call asset');
+  record('Apply call asset', false, () => 'call asset');
+  const assetPlan = ran('Plan call asset');
+  if (assetPlan && assetPlan.failed) errors.push(assetPlan.reason);
+
+  const appliedA = ranAll('Apply tracking').length > 0;
+  const appliedAsset = ranAll('Apply call asset').some((item) => !gadsError(item.json));
+  const changed = appliedA || appliedAsset;
+  const respond = errors.length
+    ? { status: changed ? 502 : 422, body: { error: `Call tracking ${changed ? 'was only partly set up' : 'was not set up'}: ${errors.join(' | ').slice(0, 400)}`, steps: plan.action.steps } }
+    : { status: 200, body: { ok: true, steps: plan.action.steps, note: 'Done. The dashboard shows it after the next sync.' } };
+  return out(logs.length ? [logWrite(logs)] : [], respond);
+}
+
 const validateError = gadsError(validation);
 if (validateError) {
   return out([logWrite([logRow(true, 'failed', { error: validateError })])],
@@ -48,6 +100,14 @@ const validatedRow = logRow(true, 'ok', gadsBody(validation));
 if (applyError) {
   return out([logWrite([validatedRow, logRow(false, 'failed', { error: applyError })])],
     { status: 502, body: { error: `The change passed validation but Google Ads did not apply it: ${applyError}` } });
+}
+
+if (plan.source === 'negatives') {
+  // Only the log here: the new negatives arrive in the negatives table (and the
+  // "Already negative" column) with the next sync.
+  const a = plan.action;
+  return out([logWrite([validatedRow, logRow(false, 'ok', gadsBody(applied))])],
+    { status: 200, body: { ok: true, added: a.terms.length, skipped: a.skipped, level: a.level } });
 }
 
 const sourcePath = plan.source === 'chat'
