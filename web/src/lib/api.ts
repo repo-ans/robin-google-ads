@@ -43,6 +43,9 @@ export type CaseMatchRun = {
   validate_only: boolean;
   cases_in: number;
   skipped: number;
+  matched: number;
+  unattributed: number;
+  case_types: Record<string, number>;
   sent_click: number;
   sent_call: number;
   accepted: number;
@@ -178,6 +181,7 @@ export type SearchTermRow = {
   conversions_value: number;
   is_negated: boolean;
   decision: "keep" | "block" | "ask_rob" | null;
+  decided_how: "person" | "rule" | "ai" | null;
   theme: string | null;
 };
 
@@ -426,6 +430,10 @@ export const actions = {
     callN8n<{ message?: ChatMessage; ok?: boolean }>("ff/campaign-chat", body),
   applyAction: (source: "chat" | "message", source_id: string) =>
     callN8n<{ ok: true; applied: ProposedAction }>("ff/apply-campaign-action", { source, source_id }),
+  setupNegativeList: (client_id: string, customer_id: string) =>
+    callN8n<{ ok: true; steps: string[]; note: string }>("ff/apply-campaign-action", { source: "neglist", source_id: client_id, customer_id }),
+  searchTriage: (body: { client_id?: string; days?: number }) =>
+    callN8n<{ status: string; message: string }>("ff/search-triage", body),
   setupCallTracking: (client_id: string, customer_id: string) =>
     callN8n<{ ok: true; steps: string[]; note: string }>("ff/apply-campaign-action", { source: "tracking", source_id: client_id, customer_id }),
   addNegatives: (body: { campaign_row_id: string; level: "campaign" | "list"; match_type: "PHRASE" | "EXACT"; terms: string[] }) =>
@@ -447,8 +455,8 @@ export const actions = {
     callN8n<{ suggestions: { resource_name: string; name: string; canonical_name: string; country_code: string | null; target_type: string | null }[] }>(
       "ff/geo-target-suggest", { query, country }),
   build: <T = unknown>(body: Record<string, unknown>) => callN8n<T>("ff/build-campaign", body),
-  caseMatch: (body: { action: "check" | "upload"; client_id: string; customer_id: string; month: string; again: boolean; cases: Record<string, string | undefined>[] }) =>
-    callN8n<{ ok: boolean; uploaded: boolean; cases_in: number; skipped: number; sent: number; accepted: number; rejected: number; reasons: Record<string, number> }>("ff/case-match", body),
+  caseMatch: (body: { action: "check" | "upload"; client_id: string; customer_id: string; month: string; again: boolean } & ({ cases: Record<string, string | undefined>[] } | { source: "ghl" })) =>
+    callN8n<{ ok: boolean; uploaded: boolean; cases_in: number; matched: number; unattributed: number; case_types: Record<string, number>; skipped: number; sent: number; accepted: number; rejected: number; reasons: Record<string, number> }>("ff/case-match", body),
   deleteCampaign: (campaign_row_id: string) => callN8n<{ ok: true }>("ff/delete-campaign", { campaign_row_id }),
   googleAdsSettings: (body: { action: "test" } | { action: "save"; values: Record<string, string> } | { action: "exchange_code"; code: string; redirect_uri: string }) =>
     callN8n<{ ok: boolean; message: string }>("ff/google-ads-settings", body),

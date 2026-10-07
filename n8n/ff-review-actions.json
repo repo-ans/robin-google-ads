@@ -2,7 +2,7 @@
   "name": "ff-review-actions",
   "nodes": [
     {
-      "id": "a80577f1-8b04-430a-839d-56d515ea57ae",
+      "id": "74e1f967-e5ab-4dbf-a6d3-234259eb2502",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -22,7 +22,7 @@
       "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
     },
     {
-      "id": "b9bcbd67-708c-4499-a575-cc3bb1909c19",
+      "id": "df834722-9995-4b77-a532-ced995bb50fa",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -36,7 +36,7 @@
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
     },
     {
-      "id": "c328cf3d-124f-4808-9ba3-0858206d5655",
+      "id": "377d05aa-ec56-4e8c-8234-7d30829b6575",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -50,7 +50,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "44273799-dbba-493b-8bf2-39a176b19b2b",
+      "id": "62b5e88a-739f-461b-a8a7-47ee1cd4727d",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -86,7 +86,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "0618c4b7-843b-4a7c-a550-173d47629cb2",
+      "id": "3ebe34c0-1e19-46a3-9ce7-a718ae1d9dde",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -131,7 +131,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "c8fa38e0-4995-4780-baf7-d81f1e44ce1f",
+      "id": "ad28d205-d53f-4a31-94cf-c15e94e50aaa",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -145,7 +145,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "23e15e93-8b69-49e3-9bc2-1ecc07da63a7",
+      "id": "c301e191-413d-4796-90aa-d507ef303256",
       "parameters": {
         "conditions": {
           "options": {
@@ -178,7 +178,7 @@
       ]
     },
     {
-      "id": "5369ce8f-cf4e-42dc-8a5c-361bb46056a6",
+      "id": "397afc7f-fad6-4c62-bfd9-5c316bd84d83",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -196,7 +196,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "79c28657-876d-464b-966e-0b5d415dc19f",
+      "id": "46c1b6e2-780c-4a29-a111-fa626fd36552",
       "name": "Validate input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -209,7 +209,7 @@
       }
     },
     {
-      "id": "ee68ed31-03eb-4adf-82a9-74f74470a47b",
+      "id": "89b531db-a7a7-46b1-b191-39381627bce5",
       "name": "Validate input ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -226,7 +226,7 @@
           },
           "conditions": [
             {
-              "id": "371557d3-423e-4546-94db-85462bba36e2",
+              "id": "680e080c-8127-4619-ae9e-e94de5840048",
               "leftValue": "={{ $json.valid === true }}",
               "rightValue": true,
               "operator": {
@@ -242,7 +242,7 @@
       }
     },
     {
-      "id": "721db270-a74e-4821-8b79-ed0dc427cd38",
+      "id": "f99af542-21bc-46f4-b2c7-1229a2aaf8e0",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -259,7 +259,7 @@
       }
     },
     {
-      "id": "a8c61c3b-95d6-4a3c-857b-ad80899cb606",
+      "id": "33bf2121-a73d-4502-8393-f55de3fb836f",
       "name": "Get search term",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -283,7 +283,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "091f3c43-ad50-4fd9-8788-5645d7467865",
+      "id": "81d872fc-0c05-4147-af5c-7fcac211fb1e",
       "name": "Plan",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -292,11 +292,11 @@
         200
       ],
       "parameters": {
-        "jsCode": "// ---- shared/input.js (included by scripts/build-n8n.mjs) -------------------\n// Webhook input helpers. The caller always comes from the Auth check block,\n// never from the request body.\nconst UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst CUSTOMER_RE = /^[0-9]{10}$/;\nconst ZERO_UUID = '00000000-0000-0000-0000-000000000000';\n\nconst requestBody = () => {\n  const b = $('Config').first().json.body;\n  return b && typeof b === 'object' ? b : {};\n};\nconst caller = () => $('Auth: check role').first().json.user;\nconst isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);\nconst customerId = (v) => {\n  const d = String(v === undefined || v === null ? '' : v).replace(/-/g, '');\n  return CUSTOMER_RE.test(d) ? d : null;\n};\nconst text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');\n\n// Every \"result\" item carries { status, body } for the generic Respond node.\nconst reject = (status, error) => [{ json: { valid: false, status, body: { error } } }];\nconst reply = (status, body) => [{ json: { status, body } }];\n// ---- end shared/input.js ----------------------------------------------------\n\n// Turns a validated action into one Supabase write. For triage the stored\n// search term text is copied from search_term_daily (already name-filtered).\nconst v = $('Validate input').first().json;\nconst term = $input.first().json || {};\nconst user = caller();\n\nif (v.action === 'triage') {\n  if (!term.search_term) return reject(404, 'Search term not found.');\n  return [{\n    json: {\n      valid: true, method: 'POST', prefer: 'resolution=merge-duplicates,return=representation',\n      path: 'search_term_triage?on_conflict=customer_id,campaign_id,term_hash',\n      body: [{\n        customer_id: v.customer_id, campaign_id: v.campaign_id, term_hash: v.term_hash, search_term: term.search_term,\n        decision: v.decision, theme: v.theme, note: v.note, decided_by: user.user_id, decided_at: new Date().toISOString(),\n      }],\n    },\n  }];\n}\n\nconst rn = encodeURIComponent(v.resource_name);\nreturn [{\n  json: {\n    valid: true, method: 'PATCH', prefer: 'return=representation',\n    path: v.action === 'hide_recommendation'\n      ? `recommendations?resource_name=eq.${rn}&status=eq.open`\n      : `recommendations?resource_name=eq.${rn}&status=eq.hidden`,\n    body: { status: v.action === 'hide_recommendation' ? 'hidden' : 'open' },\n  },\n}];\n"
+        "jsCode": "// ---- shared/input.js (included by scripts/build-n8n.mjs) -------------------\n// Webhook input helpers. The caller always comes from the Auth check block,\n// never from the request body.\nconst UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst CUSTOMER_RE = /^[0-9]{10}$/;\nconst ZERO_UUID = '00000000-0000-0000-0000-000000000000';\n\nconst requestBody = () => {\n  const b = $('Config').first().json.body;\n  return b && typeof b === 'object' ? b : {};\n};\nconst caller = () => $('Auth: check role').first().json.user;\nconst isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);\nconst customerId = (v) => {\n  const d = String(v === undefined || v === null ? '' : v).replace(/-/g, '');\n  return CUSTOMER_RE.test(d) ? d : null;\n};\nconst text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');\n\n// Every \"result\" item carries { status, body } for the generic Respond node.\nconst reject = (status, error) => [{ json: { valid: false, status, body: { error } } }];\nconst reply = (status, body) => [{ json: { status, body } }];\n// ---- end shared/input.js ----------------------------------------------------\n\n// Turns a validated action into one Supabase write. For triage the stored\n// search term text is copied from search_term_daily (already name-filtered).\nconst v = $('Validate input').first().json;\nconst term = $input.first().json || {};\nconst user = caller();\n\nif (v.action === 'triage') {\n  if (!term.search_term) return reject(404, 'Search term not found.');\n  return [{\n    json: {\n      valid: true, method: 'POST', prefer: 'resolution=merge-duplicates,return=representation',\n      path: 'search_term_triage?on_conflict=customer_id,campaign_id,term_hash',\n      body: [{\n        customer_id: v.customer_id, campaign_id: v.campaign_id, term_hash: v.term_hash, search_term: term.search_term,\n        decision: v.decision, theme: v.theme, note: v.note, decided_by: user.user_id, decided_how: 'person', decided_at: new Date().toISOString(),\n      }],\n    },\n  }];\n}\n\nconst rn = encodeURIComponent(v.resource_name);\nreturn [{\n  json: {\n    valid: true, method: 'PATCH', prefer: 'return=representation',\n    path: v.action === 'hide_recommendation'\n      ? `recommendations?resource_name=eq.${rn}&status=eq.open`\n      : `recommendations?resource_name=eq.${rn}&status=eq.hidden`,\n    body: { status: v.action === 'hide_recommendation' ? 'hidden' : 'open' },\n  },\n}];\n"
       }
     },
     {
-      "id": "93447e1f-e522-430b-8525-b97e0b195538",
+      "id": "cb800236-6043-481a-9e01-87bb9b0726eb",
       "name": "Plan ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -313,7 +313,7 @@
           },
           "conditions": [
             {
-              "id": "aa75ed3f-f205-4e6d-bd08-1a50f330773c",
+              "id": "364b5f49-7969-4f06-b2ab-7cbd29e112d5",
               "leftValue": "={{ $json.valid === true }}",
               "rightValue": true,
               "operator": {
@@ -329,7 +329,7 @@
       }
     },
     {
-      "id": "b79a1ad6-aad0-46eb-a917-135c7ceeb86a",
+      "id": "37230824-2049-4f4c-a09d-04e5f6d90d9d",
       "name": "Save",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -372,7 +372,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "e0dd9021-2c9a-4d0a-a396-26ea8e12e591",
+      "id": "f016b0bf-ff5a-4b5c-bf7e-d2e8b2ede2aa",
       "name": "Save result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,

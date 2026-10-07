@@ -1,0 +1,787 @@
+{
+  "name": "ff-search-triage",
+  "nodes": [
+    {
+      "id": "789a066c-be84-42ef-9d4f-610c784aab5f",
+      "name": "Schedule: weekly Monday 07:30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 7,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      },
+      "notes": "Monday 07:30, after the 06:00 sync, for the last 7 days. Workflow settings > Timezone: FF's time zone."
+    },
+    {
+      "id": "a454964d-97e4-4d99-8eeb-d4fb5b77f287",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        400
+      ],
+      "webhookId": "ff-search-triage",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ff/search-triage",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "http://localhost:5173"
+        }
+      },
+      "notes": "\"Sort new searches\" on the dashboard. Answers 202 at once; the sorting carries on."
+    },
+    {
+      "id": "c00a2192-4ce9-425a-8bda-bb267c05fd19",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Non-secret settings for ff-search-triage (PDF task 5, weekly part).\n//   n8n credentials: FF Supabase (service role), FF OpenAI.\n// Monday 07:30 (after the 06:00 sync) for the last 7 days, and from the dashboard\n// (\"Sort new searches\"). Webhook body (optional): { client_id, days: 7..30 }\nconst SETTINGS = {\n  SUPABASE_URL: 'https://SET-ME.supabase.co',\n  SUPABASE_ANON_KEY: 'SET-ME',\n  ALLOWED_ROLES: ['rob_admin', 'ff_staff'],\n  USE_AI: true, // false: only the FF blocked words and names are used; the rest goes to Rob\n};\n\nconst src = $input.first().json || {};\nconst fromWebhook = Boolean(src.headers);\nconst body = fromWebhook && src.body && typeof src.body === 'object' ? src.body : {};\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst days = Number.isInteger(body.days) && body.days >= 1 && body.days <= 30 ? body.days : 7;\n\nreturn [{\n  json: {\n    ...SETTINGS,\n    body,\n    trigger: fromWebhook ? 'manual' : 'schedule',\n    only_client_id: typeof body.client_id === 'string' && uuid.test(body.client_id) ? body.client_id : null,\n    days,\n  },\n}];\n"
+      },
+      "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
+    },
+    {
+      "id": "5a6fd1a3-df8e-4793-9b33-952b071fe982",
+      "name": "Manual run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "f7a3134f-9a4c-484d-a2d6-a2f46e89184d",
+              "leftValue": "={{ $('Config').first().json.trigger === 'manual' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "014d2165-796e-4387-b61f-a4e27a568d4a",
+      "parameters": {
+        "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
+      },
+      "name": "Auth: read token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        400
+      ],
+      "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
+    },
+    {
+      "id": "bc31a560-c356-421c-9fbc-5ab4d76e930a",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Config').first().json.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token || 'missing' }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: verify token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        400
+      ],
+      "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
+    },
+    {
+      "id": "4d443b11-a384-484f-9b09-79ffcf8b7b5c",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "=eq.{{ (($json.statusCode === 200 && $json.body && /^[0-9a-f-]{36}$/.test($json.body.id)) ? $json.body.id : '00000000-0000-0000-0000-000000000000') }}"
+            },
+            {
+              "name": "select",
+              "value": "user_id,email,role,client_id,disabled"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: load profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        400
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
+    },
+    {
+      "id": "d777f6e6-796b-45da-8441-5e42f4b56850",
+      "parameters": {
+        "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
+      },
+      "name": "Auth: check role",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        400
+      ],
+      "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
+    },
+    {
+      "id": "904a8d7b-0bce-422b-80a7-02e1c30a382c",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "a1b2c3d4-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Auth: allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        400
+      ]
+    },
+    {
+      "id": "2b058b25-2aa3-4ac3-8dfe-d3581310cbbf",
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "name": "Respond: denied",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        600
+      ],
+      "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
+    },
+    {
+      "id": "ca6eb807-785e-4325-a84f-f504faf9ac49",
+      "name": "Respond: accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'started', message: 'Sorting new searches. The Search Terms tabs show the decisions in a minute or two.' }) }}",
+        "options": {
+          "responseCode": 202
+        }
+      }
+    },
+    {
+      "id": "2c09b39d-dc54-4e24-8055-3fe5201bd158",
+      "name": "Get blocked words",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/universal_negatives?select=text,match_type,theme",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "id": "82bf714e-6307-4944-983d-800a7407cd3c",
+      "name": "Get candidates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/rpc/ff_triage_candidates",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_days: $('Config').first().json.days, p_client_id: $('Config').first().json.only_client_id }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "id": "1003f9a5-d8c2-4324-8178-4347021a25ae",
+      "name": "Rule triage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// First pass, no AI: a search term that contains an FF blocked word (same\n// matching as Google negatives: exact / phrase / all words), a competitor's name\n// or the client's own name is \"block\" - obvious junk (Robin: \"block obvious junk\n// yourself\"). Everything else goes to the AI in one batch per campaign.\n// Output: one item { rule_rows, ai_batches } (counts only in logs, never terms).\nconst cfg = $('Config').first().json;\nconst campaigns = $('Get candidates').all().map((i) => i.json).filter((c) => c && c.customer_id && Array.isArray(c.terms));\nconst universal = $('Get blocked words').all().map((i) => i.json).filter((r) => r && r.text);\n\nconst norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 '&.-]+/g, ' ').replace(/\\s+/g, ' ').trim();\nfunction matches(term, neg, type) {\n  const t = norm(term);\n  const n = norm(neg);\n  if (!n) return false;\n  if (type === 'EXACT') return t === n;\n  if (type === 'PHRASE') return ` ${t} `.includes(` ${n} `);\n  const words = new Set(t.split(' '));\n  return n.split(' ').every((w) => words.has(w));\n}\n\nconst now = new Date().toISOString();\nconst ruleRows = [];\nconst aiBatches = [];\nfor (const c of campaigns) {\n  const rest = [];\n  for (const term of c.terms) {\n    let theme = null;\n    let why = null;\n    const u = universal.find((x) => matches(term.term, x.text, x.match_type));\n    if (u) { theme = u.theme; why = `FF blocked word \"${u.text}\"`; }\n    if (!theme) {\n      const comp = (c.competitor_terms || []).find((x) => matches(term.term, x, 'PHRASE'));\n      if (comp) { theme = 'competitor'; why = 'competitor name'; }\n    }\n    if (!theme) {\n      const own = ((c.own_brand_terms || []).length ? c.own_brand_terms : [c.client_name]).find((x) => matches(term.term, x, 'PHRASE'));\n      if (own) { theme = 'own name'; why = \"the client's own name\"; }\n    }\n    if (theme) {\n      ruleRows.push({\n        customer_id: c.customer_id, campaign_id: c.campaign_id, term_hash: term.term_hash, search_term: term.term,\n        decision: 'block', theme, note: `Sorted automatically: ${why}.`, decided_by: null, decided_how: 'rule', decided_at: now,\n      });\n    } else {\n      rest.push(term);\n    }\n  }\n  if (rest.length && cfg.USE_AI) {\n    aiBatches.push({\n      customer_id: c.customer_id, campaign_id: c.campaign_id, campaign_name: c.campaign_name || '', client_name: c.client_name || '',\n      process: c.process === 'online_cremation' ? 'an online cremation provider' : 'a funeral home',\n      towns: (c.towns || []).join(', ') || 'not set', terms: rest,\n      list: rest.map((t, i) => `${i + 1}. ${t.term} (clicks ${t.clicks}, conversions ${Math.round(Number(t.conversions || 0) * 10) / 10})`).join('\\n'),\n    });\n  } else if (rest.length) {\n    for (const t of rest) {\n      ruleRows.push({\n        customer_id: c.customer_id, campaign_id: c.campaign_id, term_hash: t.term_hash, search_term: t.term,\n        decision: 'ask_rob', theme: null, note: 'Not sorted automatically (AI is off).', decided_by: null, decided_how: 'rule', decided_at: now,\n      });\n    }\n  }\n}\n\nreturn [{ json: { rule_rows: ruleRows, ai_batches: aiBatches, campaigns: campaigns.length } }];\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "ae4cf0b1-68cd-4dc1-86bf-03892302b0fc",
+      "name": "AI batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const b = $('Rule triage').first().json.ai_batches || [];\nreturn b.length ? b.map((x) => ({ json: x })) : [{ json: { skip: true } }];"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "29354210-12aa-477d-9692-5e1916ca8ba4",
+      "name": "Anything for the AI?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "d91a5bee-6745-4b4a-9a51-a575ed6be43c",
+              "leftValue": "={{ !$json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "55333311-0c15-47aa-904a-ac893380c274",
+      "name": "Sort (AI Agent)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        3080,
+        0
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Business: {{ $json.process }}, {{ $json.client_name }}. Towns served: {{ $json.towns }}. Campaign: {{ $json.campaign_name }}.\nSearch terms from the last week (number, term, clicks, conversions):\n{{ $json.list }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You sort Google Ads search terms for Funeral Futurist (FF), an agency for funeral homes and cremation providers. For every numbered term decide:\n- \"keep\": the person could be looking to arrange a funeral, cremation, burial or preplanning, or to contact this business, in or near the towns served.\n- \"block\": clearly never a customer - obituaries and death notices, jobs and schools, products to buy (urns, jewelry, flowers, caskets), writing help (poems, eulogies, quotes), etiquette, free services or body donation, other states or far-away places, pets (unless the business is a pet crematory), research with no wish to hire anyone.\n- \"ask_rob\": anything you are not sure about, or a term that had conversions but you would block.\nAnswer every number exactly once. theme is one or two plain words (for example obituaries, jobs, products, location, pricing, preplanning). Write in a calm, plain, respectful tone - these are funeral homes and cremation providers. Use plain hyphens (-), never long dashes, and no emoji. Never write personal names of families or of people who have died; if the text you were given contains [name], keep it as [name]. Only use the numbers you were given; never invent data."
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "onError continueRegularOutput: a malformed model output must not stop the workflow (reference lesson). The next Code node treats it as no answer."
+    },
+    {
+      "id": "85281b8c-2117-4623-8b3e-4e8a56dae471",
+      "name": "Sort (AI Agent) - OpenAI model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        3000,
+        220
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "",
+          "name": "FF OpenAI"
+        }
+      },
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a6b14054-effc-4243-bc10-2324f7ff9aa2",
+      "name": "Sort (AI Agent) - output format",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        3200,
+        220
+      ],
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"decisions\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"n\": {\n            \"type\": \"integer\"\n          },\n          \"decision\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"keep\",\n              \"block\",\n              \"ask_rob\"\n            ]\n          },\n          \"theme\": {\n            \"type\": \"string\"\n          }\n        },\n        \"required\": [\n          \"n\",\n          \"decision\",\n          \"theme\"\n        ]\n      }\n    }\n  },\n  \"required\": [\n    \"decisions\"\n  ]\n}"
+      }
+    },
+    {
+      "id": "40208149-90b9-419f-ad16-e0a457d67387",
+      "name": "Save rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// ---- shared/ai.js (included by scripts/build-n8n.mjs) ----------------------\n// Checks and cleans what the AI returns before it is stored.\n\nconst ACTION_TYPES = ['update_daily_budget', 'pause_campaign', 'resume_campaign'];\n\n// Hard rule 6: calm tone, plain hyphens, no emoji.\nfunction cleanText(text) {\n  return String(text || '')\n    .replace(/[‒-―−]/g, '-')\n    .replace(/[‘’]/g, \"'\")\n    .replace(/[“”]/g, '\"')\n    .replace(/\\p{Extended_Pictographic}️?/gu, '')\n    .replace(/[ \\t]+\\n/g, '\\n')\n    .trim();\n}\n\n// Only the three reference action types survive; anything else becomes null.\n// daily_budget is in the account currency.\nfunction normalizeAction(a) {\n  if (!a || typeof a !== 'object' || !ACTION_TYPES.includes(a.action_type)) return null;\n  const out = { action_type: a.action_type, daily_budget: null, reason: cleanText(a.reason || '').slice(0, 300) };\n  if (a.action_type === 'update_daily_budget') {\n    const n = Number(a.daily_budget);\n    if (!(n > 0 && n < 100000)) return null;\n    out.daily_budget = Math.round(n * 100) / 100;\n  }\n  return out;\n}\n\nconst money = (micros) => Math.round(Number(micros || 0) / 1e4) / 100;\nconst pct = (v) => (v === null || v === undefined ? 'n/a' : `${Math.round(Number(v) * 100)}%`);\n// ---- end shared/ai.js -------------------------------------------------------\n\n// Joins the rule decisions with the AI decisions (each AI answer matched to its\n// campaign batch with itemMatching(i), each decision to its term by its number in\n// that batch). A missing, malformed or unsure answer becomes \"ask_rob\" - nothing\n// is ever blocked by a guess. Output: { rows, counts } for one upsert that never\n// overwrites a decision already made (resolution=ignore-duplicates).\nconst rules = $('Rule triage').first().json;\nconst rows = [...(rules.rule_rows || [])];\nconst now = new Date().toISOString();\nconst DECISIONS = ['keep', 'block', 'ask_rob'];\n\nlet answers = [];\ntry {\n  answers = $('Sort (AI Agent)').all();\n} catch (e) {\n  answers = []; // no AI batch this week\n}\nanswers.forEach((item, i) => {\n  let batch = null;\n  try {\n    batch = $('AI batches').itemMatching(i).json;\n  } catch (e) {\n    batch = (($('AI batches').all()[i]) || {}).json || null;\n  }\n  if (!batch || !batch.terms) return;\n  const out = item.json && item.json.output;\n  const byNumber = new Map();\n  for (const d of (out && Array.isArray(out.decisions) ? out.decisions : [])) {\n    const n = Number(d && d.n);\n    if (Number.isInteger(n) && n >= 1 && n <= batch.terms.length && DECISIONS.includes(d.decision)) byNumber.set(n, d);\n  }\n  batch.terms.forEach((t, k) => {\n    const d = byNumber.get(k + 1);\n    rows.push({\n      customer_id: batch.customer_id, campaign_id: batch.campaign_id, term_hash: t.term_hash, search_term: t.term,\n      decision: d ? d.decision : 'ask_rob',\n      theme: d && d.theme ? cleanText(d.theme).slice(0, 60) : null,\n      note: d ? 'Sorted automatically by the AI.' : 'The AI gave no clear answer - Rob decides.',\n      decided_by: null, decided_how: 'ai', decided_at: now,\n    });\n  });\n});\n\nconst counts = { keep: 0, block: 0, ask_rob: 0 };\nfor (const r of rows) counts[r.decision]++;\nreturn [{ json: { rows, counts, campaigns: rules.campaigns, total: rows.length } }];\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "5363d193-3e69-40d8-a9e0-cc2b345e14e0",
+      "name": "Anything to save?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "6f6a4a26-0df5-43d7-af35-4015987ffe8f",
+              "leftValue": "={{ $json.total > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "84dcbc28-c7c9-4f80-aa9e-6732df900b30",
+      "name": "Save triage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3740,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/search_term_triage?on_conflict=customer_id,campaign_id,term_hash",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "resolution=ignore-duplicates,return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.rows) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "notes": "ignore-duplicates: a decision already made (by a person or earlier) is never overwritten."
+    }
+  ],
+  "connections": {
+    "Sort (AI Agent) - OpenAI model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Sort (AI Agent)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sort (AI Agent) - output format": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Sort (AI Agent)",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: weekly Monday 07:30": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Manual run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual run?": {
+      "main": [
+        [
+          {
+            "node": "Auth: read token",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get blocked words",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: read token": {
+      "main": [
+        [
+          {
+            "node": "Auth: verify token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: verify token": {
+      "main": [
+        [
+          {
+            "node": "Auth: load profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: load profile": {
+      "main": [
+        [
+          {
+            "node": "Auth: check role",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: check role": {
+      "main": [
+        [
+          {
+            "node": "Auth: allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: allowed?": {
+      "main": [
+        [
+          {
+            "node": "Respond: accepted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: denied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond: accepted": {
+      "main": [
+        [
+          {
+            "node": "Get blocked words",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get blocked words": {
+      "main": [
+        [
+          {
+            "node": "Get candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get candidates": {
+      "main": [
+        [
+          {
+            "node": "Rule triage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rule triage": {
+      "main": [
+        [
+          {
+            "node": "AI batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI batches": {
+      "main": [
+        [
+          {
+            "node": "Anything for the AI?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything for the AI?": {
+      "main": [
+        [
+          {
+            "node": "Sort (AI Agent)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sort (AI Agent)": {
+      "main": [
+        [
+          {
+            "node": "Save rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save rows": {
+      "main": [
+        [
+          {
+            "node": "Anything to save?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything to save?": {
+      "main": [
+        [
+          {
+            "node": "Save triage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

@@ -14,6 +14,7 @@ import DateRangePicker from "../components/DateRangePicker";
 import ClientForm from "../components/ClientForm";
 import MessageThread from "../components/MessageThread";
 import CallTracking from "../components/CallTracking";
+import BlockedSearches from "../components/BlockedSearches";
 import { Button, ConfirmDialog, ErrorNote, Notice, PageSkeleton, Pill, Section, StatCard, StatusPill, linkButtonClass } from "../components/ui";
 
 type TrackingFlag = { customer_id: string; name: string; last_conversion_date: string | null; flag_no_recent_conversions: boolean; flag_call_duration_not_90s: boolean; phone_call_duration_seconds: number | null };
@@ -214,6 +215,7 @@ export default function ClientDetailPage() {
         </Section>
 
         {agency && <CallTracking clientId={clientId} phone={client.phone} />}
+        {agency && <BlockedSearches clientId={clientId} clientName={client.name} competitors={client.competitor_terms ?? []} ownBrand={client.own_brand_terms ?? []} />}
 
         <Section
           title="Weekly report"

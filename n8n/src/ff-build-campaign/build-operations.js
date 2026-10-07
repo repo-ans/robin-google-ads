@@ -6,7 +6,7 @@
 // and leave a partial campaign behind.
 const cfg = $('Config').first().json;
 const plan = $('Plan build').first().json;
-const found = parseStream($input.first().json || {});
+const found = parseStream($('Find FF negative list').first().json || {});
 const { clean, ctx } = plan;
 const client = ctx.client || {};
 const C = `customers/${plan.customer_id}`;
@@ -64,13 +64,34 @@ for (const term of client.competitor_terms || []) {
   if (t) ops.push({ campaignCriterionOperation: { create: { campaign, negative: true, keyword: { text: t, matchType: 'PHRASE' } } } });
 }
 
-// FF universal negative list: reuse the account's list if it exists, otherwise create it.
-let sharedSet = found.rows && found.rows[0] && found.rows[0].sharedSet && found.rows[0].sharedSet.resourceName;
+// FF blocked-words list ("FF - Funeral universal negatives"): reuse the account's
+// list if it exists (the older name "FF Universal Negatives" counts too), otherwise
+// create it with the FF words from Supabase (universal_negatives) plus the client's
+// own name and competitors (Robin, task 5). Config NEGATIVE_LIST is the fallback.
+const rows = (found.rows || []).map((r) => r.sharedSet).filter(Boolean);
+const preferred = rows.find((s) => s.name === cfg.NEGATIVE_LIST_NAME) || rows[0];
+let sharedSet = preferred && preferred.resourceName;
 const reusedList = Boolean(sharedSet);
 if (!sharedSet) {
   sharedSet = temp('sharedSets');
   ops.push({ sharedSetOperation: { create: { resourceName: sharedSet, name: cfg.NEGATIVE_LIST_NAME, type: 'NEGATIVE_KEYWORDS' } } });
-  for (const n of cfg.NEGATIVE_LIST) {
+  let universal = [];
+  try {
+    universal = $('Get blocked words').all().map((i) => i.json).filter((r) => r && r.text && r.match_type);
+  } catch (e) {
+    universal = [];
+  }
+  const words = (universal.length ? universal : cfg.NEGATIVE_LIST).map((n) => ({ text: n.text, match_type: n.match_type }));
+  const tidy = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9 '&.-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  for (const extra of [client.name, ...(client.competitor_terms || [])]) {
+    const t = tidy(extra);
+    if (t && t.length <= 80 && t.split(' ').length <= 10) words.push({ text: t, match_type: 'PHRASE' });
+  }
+  const seen = new Set();
+  for (const n of words) {
+    const key = `${n.text}|${n.match_type}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     ops.push({ sharedCriterionOperation: { create: { sharedSet, keyword: { text: n.text, matchType: n.match_type } } } });
   }
 }

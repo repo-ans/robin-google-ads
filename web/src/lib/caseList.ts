@@ -5,12 +5,13 @@
 //
 // Allowed columns - no names of any kind:
 //   case_date   YYYY-MM-DD, the day the case was signed (required)
+//   case_type   e.g. at-need, preneed (optional; only counted)
 //   value       case value in the account currency (optional; the client's case value is used if empty)
 //   gclid, gbraid, wbraid   click ids from the GHL contact (optional)
 //   email, phone            the family's contact email / phone (optional, hashed by n8n before upload)
 //   call_time   YYYY-MM-DD HH:MM, when they first called (optional; with phone, matches calls from ads)
 
-export const CASE_COLUMNS = ["case_date", "value", "gclid", "gbraid", "wbraid", "email", "phone", "call_time"] as const;
+export const CASE_COLUMNS = ["case_date", "case_type", "phone", "email", "call_time", "value", "gclid", "gbraid", "wbraid"] as const;
 export type CaseColumn = (typeof CASE_COLUMNS)[number];
 export type CaseRow = Partial<Record<CaseColumn, string>>;
 
@@ -66,7 +67,7 @@ const normHeader = (h: string) => h.trim().toLowerCase().replace(/[\s-]+/g, "_")
 
 export function readCaseList(text: string): { rows: CaseRow[]; summary: CaseListSummary } | { error: string } {
   const table = parseCsv(text);
-  if (table.length < 2) return { error: "The file has no cases. The first row must be the column names." };
+  if (table.length < 2) return { error: "The file has only the column names. Add one row per signed case under them (the first row stays the column names), then choose the file again." };
   const headers = table[0].map(normHeader);
   const unknown = headers.filter((h) => h && !(CASE_COLUMNS as readonly string[]).includes(h));
   if (unknown.length) {

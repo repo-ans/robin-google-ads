@@ -12,6 +12,6 @@ for (const res of $input.all().map((i) => i.json || {})) {
 const made = plan.filter((p) => created.has(p.what)).map((p) => p.what);
 const failed = plan.filter((p) => !created.has(p.what)).map((p) => p.what);
 const message = failed.length
-  ? `Created ${made.length ? made.join(', ') : 'nothing'}; could not create ${failed.join(', ')}. Check the FF GHL key's scopes, then run Check GHL.`
+  ? `Created ${made.length ? made.join(', ') : 'nothing'}; could not create ${failed.join(', ')}. Check the FF GHL app's scopes, then run Check GHL.`
   : `Created in GHL: ${made.join(', ')}. Next: add them to the preplanning form as hidden fields.`;
 return [{ json: { status: failed.length ? 502 : 200, body: { ok: !failed.length, created: made, failed, message } } }];

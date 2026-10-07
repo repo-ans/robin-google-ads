@@ -46,7 +46,7 @@ Dashboard button -> n8n webhook (JWT + role check) -> Google Ads and/or Supabase
 | FF OpenAI | OpenAI | FF-owned API key |
 | FF Slack | Slack API | Bot token (optional - only for Slack notes) |
 | FF DataForSEO | Basic Auth | DataForSEO API login + API password |
-| FF GHL | Header Auth | Name `Authorization`, value `Bearer <GHL agency-level private integration key>` (scopes in docs/tracking-setup.md). Also set `GHL_COMPANY_ID` in the Config of ff-weekly-report and ff-ghl-setup |
+| FF GHL OAuth | OAuth2 API | FF's private GHL Marketplace app, connected once as the agency - setup in docs/tracking-setup.md section 0. Also set `GHL_COMPANY_ID` in the Config of ff-weekly-report, ff-ghl-setup and ff-case-match |
 | FF Google Sheets | Google Sheets OAuth2 API | FF Google account that can edit the client Sheets |
 
 ### Google Ads connection (dashboard, not n8n)
@@ -78,8 +78,9 @@ In every workflow:
 | ff-campaign-chat | Campaign Assistant | staff |
 | ff-client-message | Client suggestions + AI draft | clients (own client), staff |
 | ff-send-reply | Send the edited reply | staff |
-| ff-apply-campaign-action | Confirm & Apply (budget / pause / resume), add negative keywords (Search Terms tab) | Rob |
+| ff-apply-campaign-action | Confirm & Apply (budget / pause / resume), add negative keywords (Search Terms tab), set up call tracking and the blocked-words list (client page) | Rob |
 | ff-case-match | Monthly case match: check (staff) or upload (Rob) signed cases as offline conversions; counts only | staff / Rob |
+| ff-search-triage | Monday 07:30: sorts new search terms into keep / block / ask Rob (rules, then AI). Also "Sort new searches" on the client page | schedule; staff |
 | ff-gaql | One read-only Google Ads query (Claude Code: `node scripts/ff.mjs gaql`) | staff |
 | ff-build-campaign | Drafts (staff), build PAUSED campaign (Rob) | staff / Rob |
 | ff-delete-campaign | Remove a campaign | Rob |

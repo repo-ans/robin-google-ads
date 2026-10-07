@@ -15,7 +15,8 @@
 // workflow reads them with "Get Google Ads secrets" (PLAN.md 3.5).
 //   FF Slack                       Slack API          - bot token (optional)
 //   FF DataForSEO                  Basic Auth         - DataForSEO API login + password
-//   FF GHL                         Header Auth        - Authorization: Bearer <GHL agency-level private integration key>
+//   FF GHL OAuth                   OAuth2 API         - FF's private GHL Marketplace app, connected once as the agency
+//                                                        (an agency private integration key cannot open sub-accounts)
 //   FF Google Sheets               Google Sheets OAuth2 - FF Google login that can edit the client Sheets
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -31,12 +32,13 @@ const CRED = {
   openai: { openAiApi: { id: "", name: "FF OpenAI" } },
   slack: { slackApi: { id: "", name: "FF Slack" } },
   dataforseo: { httpBasicAuth: { id: "", name: "FF DataForSEO" } },
-  ghl: { httpHeaderAuth: { id: "", name: "FF GHL" } },
+  ghl: { oAuth2Api: { id: "", name: "FF GHL OAuth" } },
   sheets: { googleSheetsOAuth2Api: { id: "", name: "FF Google Sheets" } },
 };
 const GHL_API = "https://services.leadconnectorhq.com";
 const GHL_HEADERS = { Version: "2021-07-28", Accept: "application/json" };
-// "FF GHL" is FF's agency-level key. Sub-account calls use a location token
+// "FF GHL OAuth" is FF's private GHL Marketplace app, installed by the agency on
+// its sub-accounts and connected once in n8n. Sub-account calls use a location token
 // made from it per client (POST /oauth/locationToken), so no client needs its
 // own key. The token lives only inside the execution (these workflows keep no
 // execution data).
@@ -134,7 +136,7 @@ class Workflow {
       parameters.genericAuthType = "httpBasicAuth";
     } else if (p.cred === "ghl") {
       parameters.authentication = "genericCredentialType";
-      parameters.genericAuthType = "httpHeaderAuth";
+      parameters.genericAuthType = "oAuth2Api";
     }
     if (p.headers) {
       parameters.sendHeaders = true;
@@ -507,6 +509,16 @@ function buildSync() {
   wf.chain("Refresh token (geo)", "Search geo names", "Map geo names", "Upsert geo names", "After geo");
   wf.connect("After geo", "Get alerts");
   wf.connect("After geo", "Get suggestion candidates");
+
+  // PDF task 6: on the first business day of the month, remind Rob that last
+  // month's case lists are due (Slack, scheduled daily run only).
+  wf.sb("Get clients (case lists)", P(29, 8), "GET", "clients?select=name&archived_at=is.null&order=name", { alwaysOutputData: true, executeOnce: true });
+  wf.code("Case list reminder", "ff-sync", "case-list-reminder.js", P(30, 8), { executeOnce: true });
+  wf.if("Send case list reminder?", "!$json.skip", P(31, 8));
+  wf.slack("Send case list reminder", P(32, 8), "={{ $json.text }}");
+  wf.connect("After geo", "Get clients (case lists)");
+  wf.chain("Get clients (case lists)", "Case list reminder", "Send case list reminder?");
+  wf.connect("Send case list reminder?", "Send case list reminder", 0);
   wf.chain("Get alerts", "Build Slack note", "Send Slack note?");
   wf.connect("Send Slack note?", "Send Slack note", 0);
   wf.chain("Get suggestion candidates", "Prepare suggestion inputs", "Anything to review?");
@@ -810,7 +822,7 @@ function buildBuild() {
   const wf = new Workflow(W);
   const allowed = webhookFront(wf, {
     path: "ff/build-campaign", roles: AGENCY,
-    settings: { GOOGLE_ADS_API_VERSION: "v25", NEGATIVE_LIST_NAME: "FF Universal Negatives", NEGATIVE_LIST: FF_NEGATIVES },
+    settings: { GOOGLE_ADS_API_VERSION: "v25", NEGATIVE_LIST_NAME: "FF - Funeral universal negatives", NEGATIVE_LIST: FF_NEGATIVES },
     doc: "ff-build-campaign: FF staff save campaign drafts; Rob builds them (reference build-campaign). Built PAUSED, search only, presence only, phrase/exact keywords, one atomic mutate, validateOnly first, logged in write_log. Competitor/client names for negatives come from the client record.",
   });
   wf.sb("Get account", P(8, 1), "GET",
@@ -832,10 +844,12 @@ function buildBuild() {
   wf.googleToken("Refresh Google token", P(16, -1));
   wf.googleAds("Find FF negative list", P(17, -1), {
     url: `=https://googleads.googleapis.com/${API_V}/customers/{{ $('Plan build').first().json.customer_id }}/googleAds:searchStream`,
-    body: "={{ JSON.stringify({ query: \"SELECT shared_set.resource_name, shared_set.name FROM shared_set WHERE shared_set.type = 'NEGATIVE_KEYWORDS' AND shared_set.status = 'ENABLED' AND shared_set.name = '\" + $('Config').first().json.NEGATIVE_LIST_NAME + \"'\" }) }}",
+    body: "={{ JSON.stringify({ query: \"SELECT shared_set.resource_name, shared_set.name FROM shared_set WHERE shared_set.type = 'NEGATIVE_KEYWORDS' AND shared_set.status = 'ENABLED' AND shared_set.name IN ('\" + $('Config').first().json.NEGATIVE_LIST_NAME + \"', 'FF Universal Negatives')\" }) }}",
     token: "Refresh Google token", login: "$('Plan build').first().json.login_customer_id", text: true,
-    notes: "Reuse the account's FF Universal Negatives list if it exists.",
+    notes: "Reuse the account's blocked-words list if it exists (new or old name).",
   });
+  wf.sb("Get blocked words", P(17, -2), "GET", "universal_negatives?select=text,match_type,theme&order=theme,text",
+    { alwaysOutputData: true, executeOnce: true, notes: "The FF blocked-words list (Supabase universal_negatives), used when the account has no list yet." });
   wf.code("Build operations", W, "build-operations.js", P(18, -1));
   const url = `=https://googleads.googleapis.com/${API_V}/customers/{{ $('Plan build').first().json.customer_id }}/googleAds:mutate`;
   wf.googleAds("Validate build", P(19, -1), {
@@ -859,7 +873,7 @@ function buildBuild() {
   wf.chain("Get build context", "Plan build", "Allowed?");
   wf.connect("Allowed?", "Mark building", 0);
   wf.connect("Allowed?", "Plan records", 1);
-  wf.chain("Mark building", "Get Google Ads secrets", "Refresh Google token", "Find FF negative list", "Build operations", "Validate build", "Check validation", "Valid?");
+  wf.chain("Mark building", "Get Google Ads secrets", "Refresh Google token", "Find FF negative list", "Get blocked words", "Build operations", "Validate build", "Check validation", "Valid?");
   wf.connect("Valid?", "Create campaign", 0);
   wf.connect("Valid?", "Plan records", 1);
   wf.connect("Create campaign", "Plan records");
@@ -952,12 +966,32 @@ function buildCaseMatch() {
   const W = "ff-case-match";
   const wf = new Workflow(W);
   const allowed = webhookFront(wf, {
-    path: "ff/case-match", roles: AGENCY, settings: { GOOGLE_ADS_API_VERSION: "v25" },
-    doc: "ff-case-match: monthly case match - check (FF staff or Rob, validateOnly) or upload (Rob) signed cases as offline conversions. Case lists are never stored; counts only.",
+    path: "ff/case-match", roles: AGENCY, settings: { GOOGLE_ADS_API_VERSION: "v25", GHL_COMPANY_ID: "SET-ME" },
+    doc: "ff-case-match: monthly case match - check (FF staff or Rob, validateOnly) or upload (Rob) signed cases as offline conversions, from a no-name list or straight from the client's GHL won opportunities. Case lists are never stored; counts only.",
   });
   const ok = validated(wf, allowed, { workflow: W, pos: P(8, 1) });
+
+  // source "ghl": read the month's won opportunities and their contacts from the
+  // client's GHL sub-account (FF's one agency key -> a token per sub-account).
+  wf.if("From GHL?", "$('Validate input').first().json.source === 'ghl'", P(9, 3));
+  wf.sb("Get client GHL", P(10, 4), "GET", `clients?id=eq.${uuidOrZero("$('Validate input').first().json.client_id")}&select=ghl_location_id`, { alwaysOutputData: true });
+  ghlLocationToken(wf, "GHL: location token", P(11, 4), "$('Get client GHL').first().json.ghl_location_id || 'none'");
+  const loc = "{{ $('Get client GHL').first().json.ghl_location_id }}";
+  wf.http("GHL: contact fields", P(12, 4), {
+    method: "GET", url: `=${GHL_API}/locations/${loc}/customFields?model=contact`, headers: ghlAuthHeaders("GHL: location token"), full: true, neverError: true,
+  }, { onError: "continueRegularOutput" });
+  wf.http("GHL: won opportunities", P(13, 4), {
+    method: "GET", url: `=${GHL_API}/opportunities/search?location_id=${loc}&status=won&limit=100`, headers: ghlAuthHeaders("GHL: location token"), full: true, neverError: true,
+  }, { onError: "continueRegularOutput", notes: "Won = signed. Only ids, dates and values are used from the answer." });
+  wf.code("GHL: won in month", W, "ghl-won.js", P(14, 4));
+  wf.if("Won cases?", "!$json.none", P(15, 4));
+  wf.http("GHL: get contacts", P(16, 5), {
+    method: "GET", url: `=${GHL_API}/contacts/{{ $json.contact_id }}`, headers: ghlAuthHeaders("GHL: location token"), full: true, neverError: true, batch: 150,
+  }, { onError: "continueRegularOutput", notes: "Phone, email and click ids of each signed family - kept only in this execution (no execution data is saved)." });
+  wf.code("GHL: build cases", W, "ghl-cases.js", P(17, 4), { executeOnce: true });
+
   wf.sb("Get case match context", P(10, 1), "POST", "rpc/ff_case_match_context", {},
-    { body: "={{ JSON.stringify({ p_client_id: $json.client_id, p_customer_id: $json.customer_id }) }}" });
+    { body: "={{ JSON.stringify({ p_client_id: $('Validate input').first().json.client_id, p_customer_id: $('Validate input').first().json.customer_id }) }}", });
   wf.sb("Get earlier uploads", P(11, 1), "GET",
     `case_match_runs?select=id,created_at&client_id=eq.${uuidOrZero("$('Validate input').first().json.client_id")}&month=eq.{{ $('Validate input').first().json.month }}-01&validate_only=eq.false&status=in.(ok,partial)&order=created_at.desc`,
     { alwaysOutputData: true, executeOnce: true });
@@ -985,7 +1019,13 @@ function buildCaseMatch() {
   wf.inline("Result", "return [{ json: $('Case match records').first().json.respond }];", P(23, 1), { executeOnce: true });
   if (!wf.nodes.some((n) => n.name === "Respond")) wf.respond("Respond", P(24, 1));
 
-  wf.connect(ok, "Get case match context", 0);
+  wf.connect(ok, "From GHL?", 0);
+  wf.connect("From GHL?", "Get client GHL", 0);
+  wf.connect("From GHL?", "Get case match context", 1);
+  wf.chain("Get client GHL", "GHL: location token", "GHL: contact fields", "GHL: won opportunities", "GHL: won in month", "Won cases?");
+  wf.connect("Won cases?", "GHL: get contacts", 0);
+  wf.connect("Won cases?", "GHL: build cases", 1);
+  wf.chain("GHL: get contacts", "GHL: build cases", "Get case match context");
   wf.chain("Get case match context", "Get earlier uploads", "Plan uploads", "Allowed?");
   wf.connect("Allowed?", "Get Google Ads secrets", 0);
   wf.connect("Allowed?", "Case match records", 1);
@@ -1032,6 +1072,90 @@ function buildGaql() {
   wf.chain("Get Google Ads secrets", "Refresh Google token", "Run query", "Shape result", "Respond");
   // Answers can hold raw search terms before the filter: keep no execution data.
   return wf.toJSON({ saveDataSuccessExecution: "none", saveDataErrorExecution: "none", saveManualExecutions: false });
+}
+
+
+// ================================================================== ff-search-triage
+// PDF task 5, weekly part: sort new search terms into keep / block / ask Rob.
+// FF blocked words and the client's own / competitor names first (rules), then
+// the AI for the rest; unclear answers go to Rob. Decisions only - adding a
+// negative keyword in Google Ads stays Rob's click (Search Terms tab).
+function buildSearchTriage() {
+  const W = "ff-search-triage";
+  const wf = new Workflow(W);
+  wf.add({
+    name: "Schedule: weekly Monday 07:30", type: "n8n-nodes-base.scheduleTrigger", typeVersion: 1.2, position: P(0, 0),
+    parameters: { rule: { interval: [{ field: "weeks", triggerAtDay: [1], triggerAtHour: 7, triggerAtMinute: 30 }] } },
+    notes: "Monday 07:30, after the 06:00 sync, for the last 7 days. Workflow settings > Timezone: FF's time zone.",
+  });
+  wf.add({
+    name: "Webhook", type: "n8n-nodes-base.webhook", typeVersion: 2, position: P(0, 2), webhookId: "ff-search-triage",
+    parameters: { httpMethod: "POST", path: "ff/search-triage", responseMode: "responseNode", options: { allowedOrigins: "http://localhost:5173" } },
+    notes: "\"Sort new searches\" on the dashboard. Answers 202 at once; the sorting carries on.",
+  });
+  wf.code("Config", W, "config.js", P(1, 1), { notes: "Set SUPABASE_URL and SUPABASE_ANON_KEY after import." });
+  wf.if("Manual run?", "$('Config').first().json.trigger === 'manual'", P(2, 1));
+  AUTH_NAMES.forEach((name, i) => {
+    const copy = JSON.parse(JSON.stringify(whoami.nodes.find((n) => n.name === name)));
+    delete copy.id;
+    copy.position = name === "Respond: denied" ? P(7, 3) : P(3 + i, 2);
+    wf.add(copy);
+  });
+  wf.add({
+    name: "Respond: accepted", type: "n8n-nodes-base.respondToWebhook", typeVersion: 1.1, position: P(8, 2),
+    parameters: {
+      respondWith: "json",
+      responseBody: "={{ JSON.stringify({ status: 'started', message: 'Sorting new searches. The Search Terms tabs show the decisions in a minute or two.' }) }}",
+      options: { responseCode: 202 },
+    },
+  });
+  wf.sb("Get blocked words", P(9, 1), "GET", "universal_negatives?select=text,match_type,theme", { alwaysOutputData: true, executeOnce: true });
+  wf.sb("Get candidates", P(10, 1), "POST", "rpc/ff_triage_candidates", { alwaysOutputData: true, executeOnce: true },
+    { body: "={{ JSON.stringify({ p_days: $('Config').first().json.days, p_client_id: $('Config').first().json.only_client_id }) }}" });
+  wf.code("Rule triage", W, "rules.js", P(11, 1), { executeOnce: true });
+  wf.inline("AI batches", "const b = $('Rule triage').first().json.ai_batches || [];\nreturn b.length ? b.map((x) => ({ json: x })) : [{ json: { skip: true } }];", P(12, 1), { executeOnce: true });
+  wf.if("Anything for the AI?", "!$json.skip", P(13, 1));
+  wf.aiAgent("Sort (AI Agent)", P(14, 0), {
+    text: "=Business: {{ $json.process }}, {{ $json.client_name }}. Towns served: {{ $json.towns }}. Campaign: {{ $json.campaign_name }}.\nSearch terms from the last week (number, term, clicks, conversions):\n{{ $json.list }}",
+    system: `You sort Google Ads search terms for Funeral Futurist (FF), an agency for funeral homes and cremation providers. For every numbered term decide:
+- "keep": the person could be looking to arrange a funeral, cremation, burial or preplanning, or to contact this business, in or near the towns served.
+- "block": clearly never a customer - obituaries and death notices, jobs and schools, products to buy (urns, jewelry, flowers, caskets), writing help (poems, eulogies, quotes), etiquette, free services or body donation, other states or far-away places, pets (unless the business is a pet crematory), research with no wish to hire anyone.
+- "ask_rob": anything you are not sure about, or a term that had conversions but you would block.
+Answer every number exactly once. theme is one or two plain words (for example obituaries, jobs, products, location, pricing, preplanning). ${STYLE}`,
+    schema: {
+      type: "object",
+      properties: {
+        decisions: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { n: { type: "integer" }, decision: { type: "string", enum: ["keep", "block", "ask_rob"] }, theme: { type: "string" } },
+            required: ["n", "decision", "theme"],
+          },
+        },
+      },
+      required: ["decisions"],
+    },
+  });
+  wf.code("Save rows", W, "save-rows.js", P(15, 1), { executeOnce: true });
+  wf.if("Anything to save?", "$json.total > 0", P(16, 1));
+  wf.sb("Save triage", P(17, 0), "POST", "search_term_triage?on_conflict=customer_id,campaign_id,term_hash",
+    { notes: "ignore-duplicates: a decision already made (by a person or earlier) is never overwritten." },
+    { prefer: "resolution=ignore-duplicates,return=minimal", body: "={{ JSON.stringify($json.rows) }}", full: true, neverError: true });
+
+  wf.chain("Schedule: weekly Monday 07:30", "Config");
+  wf.chain("Webhook", "Config", "Manual run?");
+  wf.connect("Manual run?", "Auth: read token", 0);
+  wf.connect("Manual run?", "Get blocked words", 1);
+  wf.chain(...AUTH_NAMES.slice(0, 5));
+  wf.connect("Auth: allowed?", "Respond: accepted", 0);
+  wf.connect("Auth: allowed?", "Respond: denied", 1);
+  wf.chain("Respond: accepted", "Get blocked words", "Get candidates", "Rule triage", "AI batches", "Anything for the AI?");
+  wf.connect("Anything for the AI?", "Sort (AI Agent)", 0);
+  wf.connect("Anything for the AI?", "Save rows", 1);
+  wf.chain("Sort (AI Agent)", "Save rows", "Anything to save?");
+  wf.connect("Anything to save?", "Save triage", 0);
+  return wf.toJSON();
 }
 
 // ================================================================== ff-audit
@@ -1378,6 +1502,7 @@ const builders = {
   "ff-delete-campaign": buildDelete,
   "ff-case-match": buildCaseMatch,
   "ff-gaql": buildGaql,
+  "ff-search-triage": buildSearchTriage,
   "ff-build-campaign": buildBuild,
   "ff-client-admin": buildClientAdmin,
   "ff-review-actions": buildReview,

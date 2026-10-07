@@ -309,6 +309,7 @@ from unnest(array[
   'ff_audit_data(''1111111111'')',
   'ff_keyword_research_targets(null)',
   'ff_weekly_report(current_date, null)',
+  'ff_triage_candidates(7, null)',
   'ff_case_match_context(''aaaaaaaa-0000-0000-0000-000000000001'', ''1111111111'')',
   'ff_google_ads_secrets()',
   'ff_set_google_ads_secrets(''{}''::jsonb, null)'

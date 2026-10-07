@@ -8,12 +8,13 @@ description: Monthly case match for an FF client - prepare the no-name case list
 The case list is personal data. Handle it like this, always:
 - **Do not open, print, summarise or paste the case list.** Only pass its path to the command below. If the user pastes
   case rows into the chat, do not repeat them; ask them to put the file in `case-lists/` (gitignored) instead.
-- The list must have **no names**. Allowed columns only: `case_date, value, gclid, gbraid, wbraid, email, phone, call_time`.
+- The list must have **no names**. Allowed columns only: `case_date, case_type, phone, email, call_time, value, gclid, gbraid, wbraid`.
   Any other column refuses the file.
 - The list is never stored in Supabase. n8n sends it to Google Ads and keeps counts only. The file is deleted after the upload.
 
 ## Where the columns come from
 - `case_date` - the day the case was signed (YYYY-MM-DD). Required.
+- `case_type` - at-need, preneed ... (counted only).
 - `value` - the case value; empty uses the client's case value.
 - `gclid` / `gbraid` / `wbraid` - from the family's GHL contact (the preplanning form captures them).
 - `email`, `phone` - the family's contact details, for enhanced conversions (hashed before they reach Google).
@@ -22,7 +23,8 @@ Maggie or DeAnn collect the list from the funeral home each month.
 
 ## Steps
 1. `node scripts/ff.mjs clients` - client `id` and `customer_id`.
-2. The account needs the "FF - Signed case" (and "FF - Signed case call") conversion actions - see /ff-conversions-setup.
+2. The account needs the "Case signed" and "Case signed - calls" conversion actions - Rob makes them with "Set up call tracking"
+   on the client page. Cases first contacted more than 90 days ago come back as "unattributed" - expected, not an error.
 3. Check first (FF staff or Rob, nothing is recorded in Google Ads):
    `node scripts/ff.mjs case-match check <client_id> <customer_id> <YYYY-MM> case-lists/<file>.csv`
    Read the counts: accepted, rejected, skipped and the reasons (error code names only).

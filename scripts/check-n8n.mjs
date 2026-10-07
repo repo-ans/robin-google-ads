@@ -27,7 +27,7 @@ const WRITE_WORKFLOWS = new Set(["ff-build-campaign", "ff-apply-campaign-action"
 const READ_ENDPOINTS = [/googleAds:search(Stream)?\b/, /:generateKeywordHistoricalMetrics\b/, /geoTargetConstants:suggest\b/, /customers:listAccessibleCustomers\b/, /oauth2\.googleapis\.com/];
 // Google Ads values are entered on the dashboard and stored in Supabase
 // (private.google_ads_secrets), so there are no Google credentials in n8n.
-const ALLOWED_CREDENTIALS = new Set(["FF Supabase (service role)", "FF OpenAI", "FF Slack", "FF DataForSEO", "FF GHL", "FF Google Sheets"]);
+const ALLOWED_CREDENTIALS = new Set(["FF Supabase (service role)", "FF OpenAI", "FF Slack", "FF DataForSEO", "FF GHL OAuth", "FF Google Sheets"]);
 
 const FORBIDDEN = [
   ["3534195221", "reference direct-access customer id"],

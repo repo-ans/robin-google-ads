@@ -13,7 +13,7 @@ if (v.action === 'triage') {
       path: 'search_term_triage?on_conflict=customer_id,campaign_id,term_hash',
       body: [{
         customer_id: v.customer_id, campaign_id: v.campaign_id, term_hash: v.term_hash, search_term: term.search_term,
-        decision: v.decision, theme: v.theme, note: v.note, decided_by: user.user_id, decided_at: new Date().toISOString(),
+        decision: v.decision, theme: v.theme, note: v.note, decided_by: user.user_id, decided_how: 'person', decided_at: new Date().toISOString(),
       }],
     },
   }];

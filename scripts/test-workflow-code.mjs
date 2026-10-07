@@ -39,7 +39,7 @@ const staff = { user_id: "22222222-2222-4222-8222-222222222222", email: "staff@f
 const clientA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const viewer = { user_id: "33333333-3333-4333-8333-333333333333", email: "home@client.test", role: "client_viewer", client_id: clientA };
 const ctxNodes = (body, user, extra = {}) => ({
-  Config: [item({ body, GOOGLE_ADS_API_VERSION: "v25", NEGATIVE_LIST_NAME: "FF Universal Negatives",
+  Config: [item({ body, GOOGLE_ADS_API_VERSION: "v25", NEGATIVE_LIST_NAME: "FF - Funeral universal negatives",
     NEGATIVE_LIST: [{ text: "jobs", match_type: "BROAD" }, { text: "mortuary school", match_type: "PHRASE" }] })],
   "Auth: check role": [item({ user })],
   ...extra,
@@ -118,9 +118,9 @@ await test("build: one atomic mutate, everything PAUSED, presence only, schedule
   const nodes = ctxNodes({}, rob);
   const plan = await run("ff-build-campaign/plan-build.js", { input: [item(buildCtx())], nodes });
   nodes["Plan build"] = plan;
-  const [out] = await run("ff-build-campaign/build-operations.js", {
-    input: [item({ statusCode: 200, body: "[]" })], nodes,
-  });
+  nodes["Find FF negative list"] = [item({ statusCode: 200, body: "[]" })];
+  nodes["Get blocked words"] = [item({ text: "obituary", match_type: "BROAD", theme: "obituaries" }), item({ text: "urns", match_type: "BROAD", theme: "products" })];
+  const [out] = await run("ff-build-campaign/build-operations.js", { input: nodes["Get blocked words"], nodes });
   const ops = out.json.body.mutateOperations;
   const created = (k) => ops.filter((o) => o[k]).map((o) => o[k].create);
   const campaign = created("campaignOperation")[0];
@@ -133,8 +133,11 @@ await test("build: one atomic mutate, everything PAUSED, presence only, schedule
   assert.ok(created("adGroupCriterionOperation").every((k) => ["PHRASE", "EXACT"].includes(k.keyword.matchType)));
   assert.equal(created("campaignCriterionOperation").filter((c) => c.adSchedule).length, 2, "office-hours schedule for template C");
   assert.ok(created("campaignCriterionOperation").some((c) => c.negative && c.keyword.text === "other funeral home"));
-  assert.equal(created("sharedSetOperation")[0].name, "FF Universal Negatives");
-  assert.equal(created("sharedCriterionOperation").length, 2);
+  assert.equal(created("sharedSetOperation")[0].name, "FF - Funeral universal negatives");
+  const listWords = created("sharedCriterionOperation").map((c) => `${c.keyword.text}|${c.keyword.matchType}`);
+  assert.ok(listWords.includes("obituary|BROAD") && listWords.includes("urns|BROAD"), "words from Supabase universal_negatives");
+  assert.ok(listWords.includes("other funeral home|PHRASE"), "competitors go on the list too");
+  assert.equal(new Set(listWords).size, listWords.length, "no duplicates");
   const temp = new Set();
   for (const o of ops) for (const v of Object.values(o)) if (v.create && v.create.resourceName) {
     assert.ok(!temp.has(v.create.resourceName), "temporary ids are unique");
@@ -145,10 +148,8 @@ await test("build: one atomic mutate, everything PAUSED, presence only, schedule
 await test("build: existing FF negative list is reused, not recreated", async () => {
   const nodes = ctxNodes({}, rob);
   nodes["Plan build"] = await run("ff-build-campaign/plan-build.js", { input: [item(buildCtx())], nodes });
-  const [out] = await run("ff-build-campaign/build-operations.js", {
-    input: [item({ statusCode: 200, body: JSON.stringify([{ results: [{ sharedSet: { resourceName: "customers/1234567890/sharedSets/77" } }] }]) })],
-    nodes,
-  });
+  nodes["Find FF negative list"] = [item({ statusCode: 200, body: JSON.stringify([{ results: [{ sharedSet: { resourceName: "customers/1234567890/sharedSets/77", name: "FF Universal Negatives" } }] }]) })];
+  const [out] = await run("ff-build-campaign/build-operations.js", { input: [item({})], nodes });
   const ops = out.json.body.mutateOperations;
   assert.ok(!ops.some((o) => o.sharedSetOperation));
   assert.equal(ops.find((o) => o.campaignSharedSetOperation).campaignSharedSetOperation.create.sharedSet, "customers/1234567890/sharedSets/77");
@@ -573,7 +574,7 @@ await test("ghl setup: plans only the missing fields and tag; check reports with
   n["GHL: location token"] = [item({ statusCode: 403, body: {} })];
   const noAgency = await run("ff-ghl-setup/plan.js", { input: [tags], nodes: n });
   assert.equal(noAgency[0].json.status, 502);
-  assert.match(noAgency[0].json.body.message, /oauth scopes/);
+  assert.match(noAgency[0].json.body.message, /oauth.readonly and oauth.write/);
 });
 
 await test("ghl setup: sub-account list keeps only id, name and town, sorted", async () => {
@@ -589,7 +590,7 @@ await test("ghl setup: sub-account list keeps only id, name and town, sorted", a
   ]);
   const [bad] = await run("ff-ghl-setup/format-locations.js", { input: [item({ statusCode: 403 })] });
   assert.equal(bad.json.status, 502);
-  assert.match(bad.json.body.error, /agency-level key/);
+  assert.match(bad.json.body.error, /connected as the agency/);
 });
 
 await test("ghl setup: summary matches created items by name, not position", async () => {
@@ -741,7 +742,7 @@ await test("case match plan: guards - live account, earlier upload, missing conv
   const [checkAgain] = await run("ff-case-match/plan.js", { nodes: caseNodes(caseBody(), caseCtx(), [item({ id: "r1", created_at: "2026-10-01T10:00:00Z" })]) });
   assert.equal(checkAgain.json.ok, true, "a check run is allowed after an upload");
   const [noAction] = await run("ff-case-match/plan.js", { nodes: caseNodes(caseBody(), caseCtx({ click_action: null })) });
-  assert.equal(noAction.json.reasons['no "FF - Signed case" conversion action in this account'], 2);
+  assert.equal(noAction.json.reasons['no "Case signed" conversion action yet - Rob: client page > Call tracking > Set up call tracking'], 2);
 });
 
 await test("case match records: counts from partial failure, no case data saved, check never uploads", async () => {
@@ -854,13 +855,18 @@ await test("tracking plan: turns on call reporting, creates both 90s actions, pl
   assert.equal(acct.url_suffix, ":mutate");
   assert.deepEqual(acct.body.operation.update.callReportingSetting, { callReportingEnabled: true, callConversionReportingEnabled: true });
   assert.equal(conv.url_suffix, "/conversionActions:mutate");
-  assert.deepEqual(conv.op_types, ["AD_CALL", "WEBSITE_CALL"]);
-  for (const op of conv.body.operations) {
+  assert.deepEqual(conv.op_types, ["AD_CALL", "WEBSITE_CALL", "UPLOAD_CLICKS", "UPLOAD_CALLS"]);
+  for (const op of conv.body.operations.slice(0, 2)) {
     assert.equal(op.create.phoneCallDurationSeconds, 90);
     assert.equal(op.create.primaryForGoal, true);
     assert.equal(op.create.valueSettings.defaultValue, 3500);
   }
-  assert.deepEqual(conv.body.operations.map((o) => o.create.name), ["Calls from ads 90s+", "Calls from website 90s+"]);
+  assert.deepEqual(conv.body.operations.map((o) => o.create.name), ["Calls from ads 90s+", "Calls from website 90s+", "Case signed", "Case signed - calls"]);
+  for (const op of conv.body.operations.slice(2)) {
+    assert.equal(op.create.category, "CONVERTED_LEAD");
+    assert.equal(op.create.primaryForGoal, false, "case signed is reported, bidding stays Rob's call");
+    assert.equal(op.create.phoneCallDurationSeconds, undefined);
+  }
   assert.equal(out.json.tracking.need_asset, true);
   assert.equal(out.json.tracking.phone, "(843) 555-0100");
   assert.equal(out.json.tracking.ad_call_action, null);
@@ -869,12 +875,12 @@ await test("tracking plan: turns on call reporting, creates both 90s actions, pl
 
 await test("tracking plan: existing 90s actions and asset are left alone; our action at 60s is fixed; guards", async () => {
   const done = trackCtx({ call_reporting_enabled: true, call_conversion_reporting_enabled: true, account_call_assets: 1,
-    call_actions: [{ id: "5", name: "Calls from ads 90s+", type: "AD_CALL", status: "ENABLED", seconds: 90 }, { id: "6", name: "Calls from website 90s+", type: "WEBSITE_CALL", status: "ENABLED", seconds: 90 }] });
+    call_actions: [{ id: "5", name: "Calls from ads 90s+", type: "AD_CALL", status: "ENABLED", seconds: 90 }, { id: "6", name: "Calls from website 90s+", type: "WEBSITE_CALL", status: "ENABLED", seconds: 90 }, { id: "8", name: "Case signed", type: "UPLOAD_CLICKS", status: "ENABLED", seconds: null }, { id: "9", name: "Case signed - calls", type: "UPLOAD_CALLS", status: "ENABLED", seconds: null }] });
   const [already] = await run("ff-apply-campaign-action/plan.js", { input: [item(done)], nodes: trackNodes() });
   assert.equal(already.json.status, 409);
 
   const fix = trackCtx({ call_reporting_enabled: true, call_conversion_reporting_enabled: true,
-    call_actions: [{ id: "5", name: "Calls from ads 90s+", type: "AD_CALL", status: "ENABLED", seconds: 60 }, { id: "6", name: "Calls from website 90s+", type: "WEBSITE_CALL", status: "ENABLED", seconds: 90 }] });
+    call_actions: [{ id: "5", name: "Calls from ads 90s+", type: "AD_CALL", status: "ENABLED", seconds: 60 }, { id: "6", name: "Calls from website 90s+", type: "WEBSITE_CALL", status: "ENABLED", seconds: 90 }, { id: "8", name: "Case signed", type: "UPLOAD_CLICKS", status: "ENABLED", seconds: null }, { id: "9", name: "Case signed - calls", type: "UPLOAD_CALLS", status: "ENABLED", seconds: null }] });
   const [fixed] = await run("ff-apply-campaign-action/plan.js", { input: [item(fix)], nodes: trackNodes() });
   assert.equal(fixed.json.tracking.requests_a.length, 1);
   assert.deepEqual(fixed.json.tracking.requests_a[0].body.operations[0].update,
@@ -936,7 +942,7 @@ await test("tracking records: both steps logged; answer lists the steps", async 
   nodes["Apply call asset"] = [ok];
   const out = await run("ff-apply-campaign-action/records.js", { nodes });
   assert.equal(out[0].json.respond.status, 200);
-  assert.equal(out[0].json.respond.body.steps.length, 4);
+  assert.equal(out[0].json.respond.body.steps.length, 6, "settings, 2 call actions, 2 case signed actions, call asset");
   const logs = out[0].json.body;
   assert.deepEqual(logs.map((l) => [l.request.step, l.validate_only]), [
     ["account", true], ["conversion_actions", true], ["account", false], ["conversion_actions", false],
@@ -959,14 +965,209 @@ await test("tracking plan (real account shape): 10s call actions are set to 90s,
   assert.equal(out.json.ok, true);
   assert.equal(out.json.tracking.requests_a.length, 1, "account settings already on");
   const ops = out.json.tracking.requests_a[0].body.operations;
-  assert.ok(ops.every((o) => o.update && !o.create), "existing actions are updated, nothing new is created");
-  assert.deepEqual(ops.map((o) => [o.update.resourceName, o.update.phoneCallDurationSeconds]), [
+  assert.ok(ops.slice(0, 2).every((o) => o.update && !o.create), "existing call actions are updated, no second call action");
+  assert.deepEqual(ops.slice(2).map((o) => o.create.name), ["Case signed", "Case signed - calls"]);
+  assert.deepEqual(ops.slice(0, 2).map((o) => [o.update.resourceName, o.update.phoneCallDurationSeconds]), [
     ["customers/1234567890/conversionActions/273335022", 90],
     ["customers/1234567890/conversionActions/7155638308", 90],
   ]);
   assert.equal(out.json.tracking.need_asset, false, "campaigns already show a number");
   assert.equal(out.json.tracking.country_code, "CA");
   assert.equal(out.json.tracking.ad_call_action, "customers/1234567890/conversionActions/273335022");
+});
+
+// ------------------------------------------------------------------ blocked-words list (PDF task 5)
+const neglistCtx = (n = {}, o = {}) => ({
+  found: true, customer_id: "1234567890", action_status: "proposed", login_customer_id: "9998887777",
+  is_test_account: false, writes_enabled: true,
+  neglist: {
+    last_synced_at: "2026-10-06T06:00:00Z", client_name: "Pacific Coast Cremation", own_brand_terms: [],
+    competitor_terms: ["Smith Funeral Home"], list_id: null, list_terms: [],
+    campaigns: [{ id: "10", name: "Cremation - Local", linked: false }, { id: "11", name: "Preplanning", linked: false }],
+    universal: [{ text: "obituary", match_type: "BROAD" }, { text: "mortuary school", match_type: "PHRASE" }],
+    ...n,
+  },
+  ...o,
+});
+const neglistNodes = () => ctxNodes({}, rob, { "Validate input": [item({ valid: true, source: "neglist", source_id: clientA, customer_id: "1234567890" })] });
+
+await test("blocked-words list: new account gets the list, FF words, own name, competitors, and every search campaign", async () => {
+  const [out] = await run("ff-apply-campaign-action/plan.js", { input: [item(neglistCtx())], nodes: neglistNodes() });
+  assert.equal(out.json.ok, true);
+  assert.equal(out.json.url_suffix, "googleAds:mutate");
+  const ops = out.json.mutate_body.mutateOperations;
+  assert.deepEqual(ops[0].sharedSetOperation.create, { resourceName: "customers/1234567890/sharedSets/-1", name: "FF - Funeral universal negatives", type: "NEGATIVE_KEYWORDS" });
+  const words = ops.filter((o) => o.sharedCriterionOperation).map((o) => `${o.sharedCriterionOperation.create.keyword.text}|${o.sharedCriterionOperation.create.keyword.matchType}`);
+  assert.deepEqual(words, ["obituary|BROAD", "mortuary school|PHRASE", "pacific coast cremation|PHRASE", "smith funeral home|PHRASE"]);
+  const links = ops.filter((o) => o.campaignSharedSetOperation).map((o) => o.campaignSharedSetOperation.create);
+  assert.deepEqual(links, [
+    { campaign: "customers/1234567890/campaigns/10", sharedSet: "customers/1234567890/sharedSets/-1" },
+    { campaign: "customers/1234567890/campaigns/11", sharedSet: "customers/1234567890/sharedSets/-1" },
+  ]);
+});
+
+await test("blocked-words list: existing list only gets what is missing; complete account is refused; guards", async () => {
+  const partial = neglistCtx({ list_id: "77", list_terms: ["obituary|BROAD", "mortuary school|PHRASE", "pacific coast cremation|PHRASE"],
+    campaigns: [{ id: "10", name: "Cremation - Local", linked: true }, { id: "11", name: "Preplanning", linked: false }] });
+  const [out] = await run("ff-apply-campaign-action/plan.js", { input: [item(partial)], nodes: neglistNodes() });
+  const ops = out.json.mutate_body.mutateOperations;
+  assert.ok(!ops.some((o) => o.sharedSetOperation));
+  assert.deepEqual(ops.map((o) => Object.keys(o)[0]), ["sharedCriterionOperation", "campaignSharedSetOperation"]);
+  assert.equal(ops[0].sharedCriterionOperation.create.sharedSet, "customers/1234567890/sharedSets/77");
+
+  const full = neglistCtx({ list_id: "77", list_terms: ["obituary|BROAD", "mortuary school|PHRASE", "pacific coast cremation|PHRASE", "smith funeral home|PHRASE"],
+    campaigns: [{ id: "10", name: "x", linked: true }] });
+  const [done] = await run("ff-apply-campaign-action/plan.js", { input: [item(full)], nodes: neglistNodes() });
+  assert.equal(done.json.status, 409);
+  const [locked] = await run("ff-apply-campaign-action/plan.js", { input: [item(neglistCtx({}, { writes_enabled: false }))], nodes: neglistNodes() });
+  assert.equal(locked.json.status, 403);
+  const [notSynced] = await run("ff-apply-campaign-action/plan.js", { input: [item(neglistCtx({ last_synced_at: null }))], nodes: neglistNodes() });
+  assert.equal(notSynced.json.status, 409);
+});
+
+// ------------------------------------------------------------------ weekly search-term triage
+const triageNodes = (candidates, useAi = true) => ({
+  Config: [item({ USE_AI: useAi })],
+  "Get blocked words": [item({ text: "obituary", match_type: "BROAD", theme: "obituaries" }), item({ text: "mortuary school", match_type: "PHRASE", theme: "jobs" })],
+  "Get candidates": candidates.map((c) => item(c)),
+});
+const cand = {
+  customer_id: "1234567890", campaign_id: "10", campaign_name: "Cremation - Local", client_name: "Pacific Coast Cremation",
+  process: "funeral_home", towns: ["Victoria"], own_brand_terms: [], competitor_terms: ["smith funeral home"],
+  terms: [
+    { term_hash: "a".repeat(64), term: "victoria obituary", cost_micros: 900000, clicks: 2, conversions: 0 },
+    { term_hash: "b".repeat(64), term: "smith funeral home prices", cost_micros: 500000, clicks: 1, conversions: 0 },
+    { term_hash: "c".repeat(64), term: "pacific coast cremation reviews", cost_micros: 400000, clicks: 1, conversions: 0 },
+    { term_hash: "d".repeat(64), term: "cremation cost victoria", cost_micros: 3000000, clicks: 5, conversions: 1 },
+    { term_hash: "e".repeat(64), term: "how long does cremation take", cost_micros: 200000, clicks: 1, conversions: 0 },
+  ],
+};
+
+await test("triage rules: FF words, competitors and own name are blocked without AI; the rest goes to the AI", async () => {
+  const [out] = await run("ff-search-triage/rules.js", { nodes: triageNodes([cand]) });
+  assert.deepEqual(out.json.rule_rows.map((r) => [r.term_hash[0], r.decision, r.theme, r.decided_how]), [
+    ["a", "block", "obituaries", "rule"], ["b", "block", "competitor", "rule"], ["c", "block", "own name", "rule"],
+  ]);
+  assert.equal(out.json.ai_batches.length, 1);
+  assert.deepEqual(out.json.ai_batches[0].terms.map((t) => t.term_hash[0]), ["d", "e"]);
+  assert.match(out.json.ai_batches[0].list, /^1\. cremation cost victoria \(clicks 5, conversions 1\)\n2\. how long does cremation take/);
+  const [noAi] = await run("ff-search-triage/rules.js", { nodes: triageNodes([cand], false) });
+  assert.equal(noAi.json.ai_batches.length, 0);
+  assert.equal(noAi.json.rule_rows.filter((r) => r.decision === "ask_rob").length, 2, "without AI the rest goes to Rob");
+});
+
+await test("triage save: AI answers matched by number; missing or bad answers go to Rob", async () => {
+  const nodes = triageNodes([cand]);
+  nodes["Rule triage"] = await run("ff-search-triage/rules.js", { nodes });
+  nodes["AI batches"] = nodes["Rule triage"][0].json.ai_batches.map((b) => item(b));
+  nodes["Sort (AI Agent)"] = [item({ output: { decisions: [{ n: 1, decision: "keep", theme: "pricing" }, { n: 9, decision: "block", theme: "x" }] } })];
+  const [out] = await run("ff-search-triage/save-rows.js", { nodes });
+  const byHash = Object.fromEntries(out.json.rows.map((r) => [r.term_hash[0], r]));
+  assert.equal(byHash.d.decision, "keep");
+  assert.equal(byHash.d.decided_how, "ai");
+  assert.equal(byHash.e.decision, "ask_rob", "no answer for number 2 - Rob decides");
+  assert.deepEqual(out.json.counts, { keep: 1, block: 3, ask_rob: 1 });
+  assert.ok(out.json.rows.every((r) => r.decided_by === null));
+
+  delete nodes["Sort (AI Agent)"];
+  const [noAi] = await run("ff-search-triage/save-rows.js", { nodes });
+  assert.equal(noAi.json.total, 3, "only the rule rows when the AI did not run");
+});
+
+await test("case match (Robin's list): case_type counted, cases older than 90 days unattributed not failed, matched counted", async () => {
+  const old = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
+  const recent = new Date(Date.now() - 10 * 86400000).toISOString().slice(0, 10);
+  const month = recent.slice(0, 7);
+  const body = {
+    action: "check", client_id: clientA, customer_id: "1234567890", month,
+    cases: [
+      { case_date: recent, case_type: "At-need", phone: "(250) 483-2559" },
+      { case_date: recent, case_type: "Preneed", email: "family@example.test" },
+      { case_date: recent, case_type: "At-need", phone: "250 483 0000", call_time: `${old} 10:15` },
+      { case_date: recent },
+    ],
+  };
+  const [v] = await run("ff-case-match/validate.js", { nodes: ctxNodes(body, staff) });
+  assert.equal(v.json.valid, true, "case_type is an allowed column");
+  const nodes = caseNodes(body, caseCtx({ currency_code: "CAD", time_zone: "America/Vancouver" }));
+  const [plan] = await run("ff-case-match/plan.js", { nodes });
+  assert.equal(plan.json.ok, true);
+  assert.equal(plan.json.counts.unattributed, 1, "first call more than 90 days ago");
+  assert.equal(plan.json.counts.skipped, 1, "no phone, email or click id");
+  assert.equal(plan.json.counts.matched, 2);
+  assert.deepEqual(plan.json.counts.case_types, { "at-need": 2, preneed: 1, "not given": 1 });
+
+  nodes["Plan uploads"] = [plan];
+  nodes["Upload requests"] = plan.json.uploads.map((u) => item({ kind: u.kind, sent: u.sent }));
+  nodes["Check validation"] = await run("ff-case-match/check.js", { input: [item({ statusCode: 200, body: { results: [{}, {}] } })], nodes });
+  const out = await run("ff-case-match/records.js", { nodes });
+  const runRow = out.find((o) => o.json.path === "case_match_runs").json.body;
+  assert.equal(runRow.unattributed, 1);
+  assert.equal(runRow.matched, 2);
+  assert.equal(runRow.rejected, 0, "unattributed is never counted as rejected");
+  assert.deepEqual(runRow.case_types, { "at-need": 2, preneed: 1, "not given": 1 });
+  assert.ok(!JSON.stringify(runRow).includes("483"), "no phone digits saved");
+});
+
+// ------------------------------------------------------------------ case match straight from GHL (no CSV)
+await test("case match from GHL: won opportunities of the month become cases; click id from the contact field or attribution", async () => {
+  const recent = new Date(Date.now() - 10 * 86400000).toISOString().slice(0, 10);
+  const month = recent.slice(0, 7);
+  const body = { action: "check", client_id: clientA, customer_id: "1234567890", month, source: "ghl" };
+  const [v] = await run("ff-case-match/validate.js", { nodes: ctxNodes(body, staff) });
+  assert.equal(v.json.valid, true);
+  assert.equal(v.json.source, "ghl");
+  const [both] = await run("ff-case-match/validate.js", { nodes: ctxNodes({ ...body, cases: [{ case_date: recent }] }, staff) });
+  assert.equal(both.json.valid, false);
+
+  const nodes = {
+    "Validate input": [item(v.json)],
+    "Get client GHL": [item({ ghl_location_id: "loc1" })],
+    "GHL: location token": [item({ statusCode: 200, body: { access_token: "t" } })],
+    "GHL: contact fields": [item({ statusCode: 200, body: { customFields: [{ id: "f1", fieldKey: "contact.gclid" }] } })],
+  };
+  const opps = { statusCode: 200, body: { meta: { total: 3 }, opportunities: [
+    { id: "o1", status: "won", lastStatusChangeAt: `${recent}T15:00:00Z`, monetaryValue: 4200, contact: { id: "c1", name: "Family One" } },
+    { id: "o2", status: "won", lastStatusChangeAt: "2025-01-10T15:00:00Z", contactId: "c2" },
+    { id: "o3", status: "open", lastStatusChangeAt: `${recent}T15:00:00Z`, contactId: "c3" },
+    { id: "o4", status: "won", updatedAt: `${recent}T09:00:00Z`, contactId: "c4" },
+  ] } };
+  nodes["GHL: won in month"] = await run("ff-case-match/ghl-won.js", { input: [item(opps)], nodes });
+  assert.deepEqual(nodes["GHL: won in month"].map((i) => i.json.contact_id), ["c1", "c4"], "won, in the month only");
+  assert.ok(!JSON.stringify(nodes["GHL: won in month"]).includes("Family"), "names are not carried on");
+
+  nodes["GHL: get contacts"] = [
+    item({ statusCode: 200, body: { contact: { phone: "+12505550101", email: "a@example.test", customFields: [{ id: "f1", value: "EAIaIQobChMI_from_form" }] } } }),
+    item({ statusCode: 200, body: { contact: { phone: "+12505550102", attributionSource: { gclid: "EAIaIQobChMI_from_attr" } } } }),
+  ];
+  const [built] = await run("ff-case-match/ghl-cases.js", { nodes });
+  assert.deepEqual(built.json.cases, [
+    { case_date: recent, case_type: "ghl won", value: "4200", phone: "+12505550101", email: "a@example.test", gclid: "EAIaIQobChMI_from_form" },
+    { case_date: recent, case_type: "ghl won", phone: "+12505550102", gclid: "EAIaIQobChMI_from_attr" },
+  ]);
+
+  nodes["GHL: build cases"] = [built];
+  Object.assign(nodes, caseNodes(v.json, caseCtx()));
+  nodes["Validate input"] = [item(v.json)];
+  const [plan] = await run("ff-case-match/plan.js", { nodes });
+  assert.equal(plan.json.ok, true);
+  assert.equal(plan.json.counts.cases_in, 2);
+  assert.equal(plan.json.uploads[0].body.conversions.length, 2);
+  assert.equal(plan.json.uploads[0].body.conversions[0].gclid, "EAIaIQobChMI_from_form");
+});
+
+await test("case match from GHL: no sub-account, missing scope and an empty month give plain answers", async () => {
+  const body = { valid: true, action: "check", client_id: clientA, customer_id: "1234567890", month: "2026-09", source: "ghl", cases: [] };
+  const base = { "Validate input": [item(body)], "GHL: location token": [item({ statusCode: 200, body: { access_token: "t" } })] };
+  const [noLoc] = await run("ff-case-match/ghl-won.js", { input: [item({ statusCode: 200, body: {} })], nodes: { ...base, "Get client GHL": [item({ ghl_location_id: null })] } });
+  assert.match(noLoc.json.error, /no GHL sub-account/);
+  const [scope] = await run("ff-case-match/ghl-won.js", { input: [item({ statusCode: 403, body: {} })], nodes: { ...base, "Get client GHL": [item({ ghl_location_id: "loc1" })] } });
+  assert.match(scope.json.error, /opportunities.readonly/);
+
+  const nodes = { ...caseNodes(body, caseCtx()), "Validate input": [item(body)], "GHL: build cases": [item({ cases: [], from: "ghl", error: null })] };
+  const [empty] = await run("ff-case-match/plan.js", { nodes });
+  assert.equal(empty.json.status, 404);
+  assert.match(empty.json.error, /set an opportunity to "Won"/);
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ", some failed" : ""}`);

@@ -15,7 +15,7 @@ const ran = (name) => {
   }
 };
 const ctx = plan.ctx || {};
-const counts = plan.counts || { cases_in: v.cases.length };
+const counts = plan.counts || { cases_in: (v.cases || []).length };
 const monthStart = `${v.month}-01`;
 
 const checkItems = ran('Check validation');
@@ -62,6 +62,9 @@ const runRow = {
   validate_only: validateOnly,
   cases_in: counts.cases_in || 0,
   skipped: counts.skipped || 0,
+  matched: counts.matched || 0,
+  unattributed: counts.unattributed || 0,
+  case_types: counts.case_types || {},
   sent_click: counts.sent_click || 0,
   sent_call: counts.sent_call || 0,
   accepted,
@@ -103,6 +106,9 @@ const summary = {
   ok: plan.ok && !errors.length,
   uploaded: !validateOnly,
   cases_in: runRow.cases_in,
+  matched: runRow.matched,
+  unattributed: runRow.unattributed,
+  case_types: runRow.case_types,
   skipped: runRow.skipped,
   sent: runRow.sent_click + runRow.sent_call,
   accepted,

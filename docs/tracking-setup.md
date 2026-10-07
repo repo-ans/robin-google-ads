@@ -8,17 +8,31 @@ nothing personal in tags, URLs or notifications, no call recording, whisper or p
 
 | n8n credential (exact name) | Type | Value |
 |---|---|---|
-| FF GHL | Header Auth | Name `Authorization`, Value `Bearer <GHL agency-level private integration key>`; Allowed domains: `services.leadconnectorhq.com` |
+| FF GHL OAuth | OAuth2 API | FF's private GHL Marketplace app, connected once as the agency (see below) |
 | FF Google Sheets | Google Sheets OAuth2 API | Sign in with the FF Google account that owns the client Sheets |
 | FF Slack | Slack API | Bot token (already used by ff-sync) |
 
-**One agency-level GHL key for every client** (approved by Robin, 2026-10-02). Create it in the GHL agency view:
-Agency Settings > Private Integrations > Create. Scopes: `oauth.readonly`, `oauth.write`, `locations.readonly`,
-`contacts.readonly`, `locations/customFields.readonly`, `locations/customFields.write`, `locations/tags.readonly`,
-`locations/tags.write`. For each client the workflows turn it into a short-lived token for that client's sub-account
-(`POST /oauth/locationToken`), so existing and new clients need no key of their own. Copy the agency (company) ID
-from Agency Settings (or the agency view URL) into `GHL_COMPANY_ID` in the Config node of both GHL workflows.
-Keep the key only in n8n - never in chat, code or the dashboard.
+**One FF GHL app for every client** (2026-10-06 - an agency private integration key cannot open sub-accounts, so
+it is not used). In marketplace.gohighlevel.com, signed in with FF's developer account: Create app - type **Private**,
+target user **Sub-Account**, who can install **Agency only**. Scopes: `oauth.readonly`, `oauth.write`,
+`locations.readonly`, `contacts.readonly`, `opportunities.readonly`, `locations/customFields.readonly`,
+`locations/customFields.write`, `locations/tags.readonly`, `locations/tags.write`. Redirect URL: the "OAuth Redirect
+URL" shown on the n8n credential below. Install the app from the agency on every sub-account (bulk install).
+
+n8n credential **FF GHL OAuth** (type OAuth2 API):
+- Grant Type: Authorization Code
+- Authorization URL: `https://marketplace.gohighlevel.com/oauth/chooselocation`
+- Access Token URL: `https://services.leadconnectorhq.com/oauth/token`
+- Client ID / Client Secret: from the app
+- Scope: the scopes above, separated by spaces
+- Authentication: Send credentials in body
+- Press **Connect my account** and choose the **agency** (not a sub-account).
+
+For each client the workflows turn the agency token into a short-lived token for that client's sub-account
+(`POST /oauth/locationToken`), so existing and new clients need nothing of their own - only the app installed on their
+sub-account. Copy the agency (company) ID from Agency Settings (or the agency view URL) into `GHL_COMPANY_ID` in the
+Config node of ff-weekly-report, ff-ghl-setup and ff-case-match.
+Keep the client secret only in n8n - never in chat, code or the dashboard.
 
 Import `n8n/ff-weekly-report.json` and `n8n/ff-ghl-setup.json` like the other workflows (Config: `SUPABASE_URL`,
 `SUPABASE_ANON_KEY`, `GHL_COMPANY_ID`; ff-weekly-report also `SLACK_CHANNEL` = Rob's channel and `DASHBOARD_URL`), pick the credentials,
@@ -184,13 +198,24 @@ An "arrangement started" event counts the start of the flow.
 
 ## 7. Monthly case match (Maggie or DeAnn collect, Rob uploads)
 
-1. Google Ads conversion actions (by hand, once per account): **FF - Signed case** (Import > CRM / clicks, count One,
-   primary) and **FF - Signed case call** (Import > calls). The names must match exactly - ff-case-match finds them by name.
-2. Each month the funeral home sends the signed cases of last month. Build the CSV with only these columns - no names:
-   `case_date, value, gclid, gbraid, wbraid, email, phone, call_time` (template: dashboard > client > Case match >
-   Download template). gclid/gbraid/wbraid come from the GHL contact; email/phone are hashed before they reach Google;
-   call_time (YYYY-MM-DD HH:MM) with phone matches calls from ads.
-3. Dashboard > client > Case match: choose the month and the file, **Check with Google Ads** (FF staff or Rob - nothing is
+1. "Case signed" (Import > clicks) and "Case signed - calls" (Import > calls) are made by Rob's **Set up call tracking**
+   button (client page > Call tracking). They are secondary goals: reported, not used for bidding unless Rob changes that.
+2. On the first business day of the month the daily sync sends Rob a Slack reminder that last month's lists are due.
+3. **Preferred - straight from GHL, no file:** when a family signs, the funeral home sets the opportunity to **Won** in GHL
+   (any pipeline). Case match page > **From GHL** > Check / Upload: n8n reads that month's won opportunities and their
+   contacts (phone, email, click id) from the client's sub-account with FF's one agency key, sends them to Google and
+   keeps nothing. Works for every sub-account picked on Edit client, now and future.
+4. Otherwise each funeral home sends last month's signed cases as a file, **no names**. CSV columns (dashboard > client > Case match >
+   Download template): `case_date, case_type, phone, email, call_time, value, gclid, gbraid, wbraid`.
+   - `case_date` (required) - the day the case was signed; `case_type` - at-need, preneed ... (counted only)
+   - `phone` + `call_time` (when they first called, YYYY-MM-DD HH:MM) - matches calls from ads. Google never shares
+     caller numbers (and FF never stores them), so Google does this match itself from the number and the time.
+   - `email` / `phone` alone - hashed, matched by Google to ad clicks and forms (enhanced conversions)
+   - `gclid` from the GHL contact - exact match for families who used the website form
+4. Dashboard > client > Case match: choose the month and the file, **Check with Google Ads** (FF staff or Rob - nothing is
    recorded), then Rob presses **Upload to Google Ads**. Or with Claude Code: `/ff-case-match`.
-4. Delete the file everywhere (email, downloads) after the upload. Supabase keeps counts only (`case_match_runs`).
-5. Proof (milestone M3): the run in the Case match history and the conversions visible in Google Ads > Goals.
+5. The log (Supabase `case_match_runs`, counts only): in, matched (sent to Google), uploaded, rejected (with Google's
+   reason codes), unattributed (first contact more than 90 days ago - Google cannot match them; not a failure), no id
+   (no phone, email or click id), and case types. Cost per signed case per month is shown on the same page.
+6. Delete the file everywhere (email, downloads) after the upload. The command line deletes it by itself after a successful upload.
+7. Proof (milestone M3): the run in the Case match history and the "Case signed" conversions in Google Ads > Goals.

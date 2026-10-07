@@ -17,19 +17,25 @@ const problem = (res) => {
   const s = res.statusCode;
   if (s >= 200 && s < 300) return null;
   if (s === 401) return 'GHL refused the sub-account token. Run Check GHL again.';
-  if (s === 403) return 'The FF GHL agency key needs the custom fields and tags scopes.';
+  if (s === 403) return 'The FF GHL app needs the custom fields and tags scopes.';
   if (s === 404 || s === 400) return 'GHL does not know this location ID. Check it on Edit client.';
   return `GHL answered with status ${s || 'none'}. Try again in a minute.`;
 };
 const tokenProblem = (res) => {
   const s = res.statusCode;
   if (s >= 200 && s < 300 && res.body && res.body.access_token) return null;
-  if (s === 401) return 'GHL refused the FF GHL key. It must be the agency-level key, in the n8n credential "FF GHL".';
-  if (s === 403) return 'The FF GHL agency key cannot open sub-accounts. Give it the oauth scopes (oauth.readonly, oauth.write).';
+  if (s === 401) return 'GHL refused the FF GHL app (n8n credential "FF GHL OAuth"). Press Connect on the credential again, as the agency.';
+  if (s === 403) return 'The FF GHL app cannot open this sub-account. Give it oauth.readonly and oauth.write, and install it on the sub-account.';
   if (s === 400 || s === 404 || s === 422) return 'GHL could not open this sub-account. Check GHL_COMPANY_ID in Config and the client\'s GHL sub-account.';
   return `GHL answered with status ${s || 'none'} when opening the sub-account. Try again in a minute.`;
 };
-const err = tokenProblem(tokenRes) || problem(fieldsRes) || problem(tagsRes);
+// Add what GHL itself said (a status and a short message - never contact data).
+const ghlSaid = (res) => {
+  const m = String((res.body && (res.body.message || res.body.error)) || '').slice(0, 160);
+  return ` (GHL said: ${res.statusCode || 'no answer'}${m ? ` - ${m}` : ''})`;
+};
+const tokenErr = tokenProblem(tokenRes);
+const err = (tokenErr && tokenErr + ghlSaid(tokenRes)) || problem(fieldsRes) || problem(tagsRes);
 if (err) return [{ json: { kind: 'done', status: 502, body: { ok: false, message: err } } }];
 
 const have = new Set(

@@ -35,7 +35,7 @@ export default function SearchTermsTab(p: TabProps) {
     setMsg(null);
     try {
       await actions.review({ action: "triage", customer_id: p.customerId, campaign_id: p.campaignId, term_hash: row.term_hash, decision });
-      setData((rows) => (rows ?? []).map((r) => (r.term_hash === row.term_hash ? { ...r, decision } : r)));
+      setData((rows) => (rows ?? []).map((r) => (r.term_hash === row.term_hash ? { ...r, decision, decided_how: "person" } : r)));
     } catch (e) {
       setMsg(e instanceof N8nError ? e.message : "Could not save the decision.");
     }
@@ -65,6 +65,13 @@ export default function SearchTermsTab(p: TabProps) {
       return next;
     });
 
+  // Under the buttons: who made the decision, and why (theme).
+  const howLabel = (r: SearchTermRow) =>
+    !r.decision ? "Not sorted yet"
+      : r.decided_how === "rule" ? `Auto: ${r.theme ?? "FF blocked words"}`
+        : r.decided_how === "ai" ? `AI${r.theme ? `: ${r.theme}` : ""}`
+          : "Set by FF";
+
   if (error) return <ErrorNote message={error} />;
   if (loading && !data) return <Loading />;
   const all = data ?? [];
@@ -82,19 +89,28 @@ export default function SearchTermsTab(p: TabProps) {
         </Notice>
       )}
       {msg && <ErrorNote message={msg} />}
+      {p.agency && (
+        <p className="text-xs text-ink-muted">
+          Triage: the dark button is the decision (Keep, Block or Ask Rob). All three grey means not sorted yet.
+          {" "}{all.filter((r) => r.decision).length} of {all.length} sorted in this period - use "Not triaged yet" to see the rest.
+        </p>
+      )}
       {done && <Notice tone="info">{done}</Notice>}
       {p.isRob && (
         <div className="no-print flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface p-3 text-sm">
           <span className="font-semibold">{picked.size} term(s) picked</span>
-          <select className={inputClass + " w-auto"} value={level} onChange={(e) => setLevel(e.target.value as typeof level)} aria-label="Add to">
-            <option value="list">FF Universal Negatives list (all campaigns that use it)</option>
+          <select className={inputClass.replace("w-full", "w-full sm:w-auto")} value={level} onChange={(e) => setLevel(e.target.value as typeof level)} aria-label="Add to">
+            <option value="list">FF - Funeral universal negatives (every campaign with the list)</option>
             <option value="campaign">This campaign only</option>
           </select>
-          <select className={inputClass + " w-auto"} value={matchType} onChange={(e) => setMatchType(e.target.value as typeof matchType)} aria-label="Match type">
+          <select className={inputClass.replace("w-full", "w-full sm:w-auto")} value={matchType} onChange={(e) => setMatchType(e.target.value as typeof matchType)} aria-label="Match type">
             <option value="PHRASE">Phrase match</option>
             <option value="EXACT">Exact match</option>
           </select>
           <Button variant="primary" disabled={picked.size === 0 || busy} onClick={() => setConfirming(true)}>Add as negative</Button>
+          <Button onClick={() => setPicked(new Set(all.filter((r) => r.decision === "block" && canPick(r)).slice(0, 50).map((r) => r.search_term)))}>
+            Pick all marked Block
+          </Button>
           {picked.size > 0 && <Button onClick={() => setPicked(new Set())}>Clear</Button>}
         </div>
       )}
@@ -144,13 +160,16 @@ export default function SearchTermsTab(p: TabProps) {
             key: "decision", label: "Triage", value: (r) => r.decision ?? "",
             render: (r) =>
               p.agency && !r.name_filtered ? (
-                <div className="no-print flex gap-1">
+                <div className="no-print">
+                <div className="flex gap-1">
                   {DECISIONS.map((d) => (
                     <button key={d.id} onClick={() => decide(r, d.id)}
-                      className={"rounded px-2 py-0.5 text-xs font-semibold " + (r.decision === d.id ? "bg-accent text-accent-ink" : "bg-surface-muted text-ink-muted hover:text-ink")}>
+                      className={"rounded px-2 py-0.5 text-xs font-semibold cursor-pointer " + (r.decision === d.id ? "bg-accent text-accent-ink" : "bg-surface-muted text-ink-muted hover:text-ink")}>
                       {d.label}
                     </button>
                   ))}
+                </div>
+                <p className="mt-1 text-[11px] text-ink-subtle">{howLabel(r)}</p>
                 </div>
               ) : (
                 <span className="text-xs">{DECISIONS.find((d) => d.id === r.decision)?.label ?? "-"}</span>
@@ -158,13 +177,13 @@ export default function SearchTermsTab(p: TabProps) {
           },
         ]}
       />
-      {p.agency && <p className="text-xs text-ink-subtle">"Block" records the decision for the weekly review. Rob picks terms and uses "Add as negative" to add them in Google Ads (checked by Google first, logged).</p>}
+      {p.agency && <p className="text-xs text-ink-subtle">New searches are sorted every Monday (FF blocked words and names first, then the AI; anything unclear is "Ask Rob"). Anyone in FF can change a decision. Rob adds blocked terms in Google Ads with "Pick all marked Block" and "Add as negative" (checked by Google first, logged).</p>}
       {confirming && (
         <ConfirmDialog
           title={`Add ${picked.size} negative keyword(s)?`}
           message={
             <div className="space-y-2">
-              <p>{level === "list" ? 'They go on the "FF Universal Negatives" list, so every campaign that uses the list stops showing for them.' : "They are added to this campaign only."} Match type: {matchType.toLowerCase()}.</p>
+              <p>{level === "list" ? 'They go on the "FF - Funeral universal negatives" list, so every campaign with the list stops showing for them.' : "They are added to this campaign only."} Match type: {matchType.toLowerCase()}.</p>
               <p className="text-xs">{[...picked].join(", ")}</p>
               <p className="text-xs">Google checks the change first. Every attempt is logged.</p>
             </div>

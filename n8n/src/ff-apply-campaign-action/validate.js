@@ -8,16 +8,17 @@
 //   { source: "negatives", source_id: <campaigns.id>, level: "campaign" | "list",
 //     match_type: "PHRASE" | "EXACT", terms: ["free cremation", ...] }
 //       Add negative keywords from the Search Terms tab (PDF task 5), either to
-//       the campaign or to the account's "FF Universal Negatives" list.
-//   { source: "tracking", source_id: <clients.id>, customer_id }
+//       the campaign or to the account's "FF - Funeral universal negatives" list.
+//   { source: "tracking" | "neglist", source_id: <clients.id>, customer_id }
+//       neglist: the blocked-words list on every search campaign of the account (PDF task 5).
 //       Set up call tracking (90s+) for one account of the client (PDF task 2).
 const b = requestBody();
-if (!['chat', 'message', 'negatives', 'tracking'].includes(b.source)) return reject(400, 'source must be chat, message, negatives or tracking.');
+if (!['chat', 'message', 'negatives', 'tracking', 'neglist'].includes(b.source)) return reject(400, 'source must be chat, message, negatives, tracking or neglist.');
 if (!isUuid(b.source_id)) return reject(400, 'source_id is missing or not valid.');
-if (b.source === 'tracking') {
+if (b.source === 'tracking' || b.source === 'neglist') {
   const cid = customerId(b.customer_id);
   if (!cid) return reject(400, 'customer_id must be 10 digits.');
-  return [{ json: { valid: true, source: 'tracking', source_id: b.source_id, customer_id: cid } }];
+  return [{ json: { valid: true, source: b.source, source_id: b.source_id, customer_id: cid } }];
 }
 if (b.source !== 'negatives') return [{ json: { valid: true, source: b.source, source_id: b.source_id } }];
 

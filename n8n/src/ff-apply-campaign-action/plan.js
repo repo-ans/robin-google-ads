@@ -22,7 +22,7 @@ if (v.source === 'negatives') {
   const cid = ctx.customer_id;
   const toList = v.level === 'list';
   if (toList && !ctx.universal_list_id) {
-    return refuse(422, 'This account has no "FF Universal Negatives" list yet. Build a campaign with the campaign builder (it creates the list), or add to the campaign instead.');
+    return refuse(422, 'This account has no "FF - Funeral universal negatives" list yet. Rob can add it on the client page (Blocked searches > Set up blocked-words list), or add to the campaign instead.');
   }
   const norm = (t) => String(t).toLowerCase().replace(/\s+/g, ' ').trim();
   const existing = new Set(toList ? ctx.existing_list_negatives || [] : ctx.existing_campaign_negatives || []);
@@ -43,6 +43,76 @@ if (v.source === 'negatives') {
       api_version: cfg.GOOGLE_ADS_API_VERSION,
       url_suffix: toList ? 'sharedCriteria:mutate' : 'campaignCriteria:mutate',
       mutate_body: { operations },
+      campaign_patch: null,
+      source: v.source,
+      source_id: v.source_id,
+    },
+  }];
+}
+
+// ---- Blocked-words list for one account (PDF task 5), any client, one click by Rob
+// One atomic googleAds:mutate: create "FF - Funeral universal negatives" if the
+// account has none, add the FF words that are missing plus the client's own name
+// and competitors, and attach the list to every search campaign without it.
+// Campaigns built later get it from ff-build-campaign.
+if (v.source === 'neglist') {
+  if (!ctx.is_test_account && !ctx.writes_enabled) {
+    return refuse(403, 'Writes are not turned on for this client yet. Test on the Google Ads test account first, then Rob can turn writes on in the client settings.');
+  }
+  const n = ctx.neglist || {};
+  const cid = ctx.customer_id;
+  if (!n.last_synced_at) return refuse(409, 'Sync this account first, so the current lists and campaigns are known.');
+
+  const clean = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9 '&.-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const usable = (x) => x && x.length <= 80 && x.split(' ').length <= 10;
+  const words = [];
+  const seen = new Set();
+  const add = (text, matchType) => {
+    const t = clean(text);
+    const key = `${t}|${matchType}`;
+    if (usable(t) && !seen.has(key)) {
+      seen.add(key);
+      words.push({ text: t, match_type: matchType });
+    }
+  };
+  for (const u of n.universal || []) add(u.text, u.match_type);
+  // Robin: block the client's own name and competitors' names too (phrase match).
+  const brand = (n.own_brand_terms || []).length ? n.own_brand_terms : [n.client_name];
+  for (const b of brand) add(b, 'PHRASE');
+  for (const c of n.competitor_terms || []) add(c, 'PHRASE');
+
+  const have = new Set(n.list_terms || []);
+  const missing = words.filter((w) => !have.has(`${w.text}|${w.match_type}`));
+  const unlinked = (n.campaigns || []).filter((k) => !k.linked);
+
+  const ops = [];
+  let list = n.list_id ? `customers/${cid}/sharedSets/${n.list_id}` : null;
+  const steps = [];
+  if (!list) {
+    list = `customers/${cid}/sharedSets/-1`;
+    ops.push({ sharedSetOperation: { create: { resourceName: list, name: 'FF - Funeral universal negatives', type: 'NEGATIVE_KEYWORDS' } } });
+    steps.push('Created the list "FF - Funeral universal negatives"');
+  }
+  for (const w of missing) {
+    ops.push({ sharedCriterionOperation: { create: { sharedSet: list, keyword: { text: w.text, matchType: w.match_type } } } });
+  }
+  if (missing.length) steps.push(`Added ${missing.length} blocked word(s)`);
+  for (const k of unlinked) {
+    ops.push({ campaignSharedSetOperation: { create: { campaign: `customers/${cid}/campaigns/${k.id}`, sharedSet: list } } });
+  }
+  if (unlinked.length) steps.push(`Attached it to ${unlinked.length} campaign(s): ${unlinked.map((k) => k.name).join(', ').slice(0, 300)}`);
+  if (!ops.length) return refuse(409, 'The blocked-words list is already complete and on every search campaign.');
+
+  return [{
+    json: {
+      ok: true,
+      ctx,
+      action: { action_type: 'setup_negative_list', steps, added: missing.length, campaigns: unlinked.length },
+      customer_id: cid,
+      login_customer_id: ctx.login_customer_id || null,
+      api_version: cfg.GOOGLE_ADS_API_VERSION,
+      url_suffix: 'googleAds:mutate',
+      mutate_body: { mutateOperations: ops },
       campaign_patch: null,
       source: v.source,
       source_id: v.source_id,
@@ -131,6 +201,20 @@ if (v.source === 'tracking') {
     });
     opTypes.push(type);
     steps.push(`"${name}" created (90 seconds, primary)`);
+  }
+  // The monthly case match uploads signed cases to "Case signed" (Robin's name).
+  // Secondary goal: it is reported, but bidding is not switched to it - that is Rob's call.
+  for (const [type, name] of [['UPLOAD_CLICKS', 'Case signed'], ['UPLOAD_CALLS', 'Case signed - calls']]) {
+    const have = actions.find((a) => a.type === type && a.status === 'ENABLED' && /^(case signed|ff - signed case)/i.test(a.name || ''));
+    if (have) continue;
+    ops.push({
+      create: {
+        name, type, category: 'CONVERTED_LEAD', status: 'ENABLED', primaryForGoal: false, countingType: 'ONE_PER_CLICK',
+        ...(value ? { valueSettings: { defaultValue: value, alwaysUseDefaultValue: false, ...(t.currency_code ? { defaultCurrencyCode: t.currency_code } : {}) } } : {}),
+      },
+    });
+    opTypes.push(type);
+    steps.push(`"${name}" created for the monthly case match`);
   }
   if (ops.length) requestsA.push({ label: 'conversion_actions', url_suffix: '/conversionActions:mutate', op_types: opTypes, body: { operations: ops } });
   if (needAsset) steps.push(`Call asset ${phone} added to the whole account (every campaign shows it)`);

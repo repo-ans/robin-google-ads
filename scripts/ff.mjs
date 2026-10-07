@@ -97,7 +97,7 @@ const parseJson = (s, what) => {
 };
 
 // Same rules as the dashboard (web/src/lib/caseList.ts): only these columns, no names.
-const CASE_COLUMNS = ["case_date", "value", "gclid", "gbraid", "wbraid", "email", "phone", "call_time"];
+const CASE_COLUMNS = ["case_date", "case_type", "phone", "email", "call_time", "value", "gclid", "gbraid", "wbraid"];
 function readCases(file) {
   const text = readFileSync(file, "utf8").replace(/^﻿/, "");
   const rows = [];

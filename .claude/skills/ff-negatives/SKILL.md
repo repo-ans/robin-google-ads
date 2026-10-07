@@ -10,7 +10,11 @@ You triage and record decisions. Adding a negative in Google Ads is Rob's step (
 ## Rules
 - Terms with a person's name are already replaced by "[name removed - ...]" - never try to recover them, never block them by name.
 - Never block what the client sells: cremation, direct cremation, funeral home, preplanning, prepaid funeral, the client's towns and brand.
-- Prefer the shared "FF Universal Negatives" list for junk that is junk everywhere; campaign-level only for campaign-specific cases.
+- Prefer the shared "FF - Funeral universal negatives" list for junk that is junk everywhere; campaign-level only for campaign-specific cases.
+- The list's words are in Supabase: `node scripts/ff.mjs get universal_negatives "order=theme,text"`. Rob puts the list on
+  every campaign of an account with one click (client page > Blocked searches).
+- Every Monday the ff-search-triage workflow already sorts new terms (rules, then AI). This skill is for reviewing those
+  decisions and the "ask_rob" ones, or for a run between Mondays: `node scripts/ff.mjs call ff/search-triage '{"client_id":"<id>"}'`.
 - Phrase match by default; exact when one word would be too wide.
 
 ## Junk themes (block)

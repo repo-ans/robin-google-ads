@@ -34,12 +34,12 @@ export default function CaseMatchPage() {
   const [summary, setSummary] = useState<CaseListSummary | null>(null);
   const [again, setAgain] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [confirming, setConfirming] = useState(false);
+  const [confirming, setConfirming] = useState<null | "file" | "ghl">(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   const { data, error, loading, reload } = useAsync(async () => {
     const [client, accounts, runs] = await Promise.all([
-      supabase.from("clients").select("name, case_value_micros, currency_code").eq("id", clientId).maybeSingle(),
+      supabase.from("clients").select("name, case_value_micros, currency_code, ghl_location_id").eq("id", clientId).maybeSingle(),
       supabase.from("ad_accounts").select("customer_id, descriptive_name").eq("client_id", clientId),
       supabase.from("case_match_runs").select("*").eq("client_id", clientId).order("created_at", { ascending: false }).limit(200),
     ]);
@@ -56,6 +56,7 @@ export default function CaseMatchPage() {
       name: (client.data?.name as string) ?? "Client",
       caseValue: client.data?.case_value_micros as number | null,
       currency: client.data?.currency_code as string | null,
+      ghl: Boolean(client.data?.ghl_location_id),
       accounts: (accounts.data ?? []) as Pick<AdAccount, "customer_id" | "descriptive_name">[],
       runs: list,
       spend,
@@ -90,25 +91,26 @@ export default function CaseMatchPage() {
     if (result.summary.months.length === 1) setMonth(result.summary.months[0]);
   }
 
-  async function run(action: "check" | "upload") {
-    if (!cases) return;
+  async function run(action: "check" | "upload", from: "file" | "ghl" = "file") {
+    if (from === "file" && !cases) return;
     setBusy(true);
     setMessage(null);
     try {
-      const r = await actions.caseMatch({ action, client_id: clientId, customer_id: chosen, month, again, cases });
-      const head = action === "upload" ? "Uploaded to Google Ads." : "Checked with Google Ads - nothing was sent.";
+      const base = { action, client_id: clientId, customer_id: chosen, month, again };
+      const r = await actions.caseMatch(from === "ghl" ? { ...base, source: "ghl" as const } : { ...base, cases: cases ?? [] });
+      const head = (from === "ghl" ? "From GHL: " : "") + (action === "upload" ? "Uploaded to Google Ads." : "Checked with Google Ads - nothing was sent.");
       setMessage({
         ok: true,
-        text: `${head} ${r.cases_in} case(s): ${r.accepted} accepted, ${r.rejected} rejected, ${r.skipped} skipped.`,
+        text: `${head} ${r.cases_in} in, ${r.matched} matched, ${r.accepted} ${action === "upload" ? "uploaded" : "accepted"}, ${r.rejected} rejected, ${r.unattributed} unattributed (older than 90 days), ${r.skipped} with no phone, email or click id.`,
       });
-      if (action === "upload") clearList();
+      if (action === "upload" && from === "file") clearList();
       reload();
     } catch (e) {
       setMessage({ ok: false, text: e instanceof Error ? e.message : "The case match did not run." });
       reload();
     } finally {
       setBusy(false);
-      setConfirming(false);
+      setConfirming(null);
     }
   }
 
@@ -129,7 +131,24 @@ export default function CaseMatchPage() {
         {loading && !data && <Loading />}
         {data && (
           <>
+            <Card className="no-print mt-6 space-y-3 p-6">
+              <p className="font-semibold">From GHL - no file</p>
+              <p className="text-sm text-ink-muted">
+                The families the funeral home marked <strong>Won</strong> in GHL during the chosen month are read straight from the client's
+                GHL sub-account (phone, email and the ad click id). Nothing is copied or kept - only the counts.
+              </p>
+              {data.ghl ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button disabled={!chosen || busy} onClick={() => run("check", "ghl")}>Check GHL cases with Google Ads</Button>
+                  {isRob && <Button variant="primary" disabled={!chosen || busy} onClick={() => setConfirming("ghl")}>Upload GHL cases to Google Ads</Button>}
+                </div>
+              ) : (
+                <Notice>This client has no GHL sub-account yet. Pick it on the client page (Edit client - Pick from GHL), or use a file below.</Notice>
+              )}
+            </Card>
+
             <Card className="no-print mt-6 space-y-4 p-6">
+              <p className="font-semibold">From a file</p>
               <div className="flex flex-wrap items-end gap-3">
                 <label className="text-sm">
                   <span className="mb-1 block text-xs font-semibold text-ink-muted">Google Ads account</span>
@@ -149,6 +168,8 @@ export default function CaseMatchPage() {
               </div>
               <p className="text-xs text-ink-subtle">
                 Columns: {CASE_COLUMNS.join(", ")}. case_date is required. No names - a column like "name" refuses the file.
+                Phone with call_time (when they first called) matches calls from ads; email or phone alone matches ad clicks and forms;
+                gclid from the GHL contact matches exactly. Cases first contacted more than 90 days ago are "unattributed", not failures.
                 Email and phone are hashed before they reach Google; nothing from the list is saved. Delete the file after the upload.
               </p>
 
@@ -162,7 +183,7 @@ export default function CaseMatchPage() {
               <div className="flex flex-wrap items-center gap-2">
                 <Button disabled={!cases || !chosen || busy} onClick={() => run("check")}>{busy ? "Working..." : "Check with Google Ads"}</Button>
                 {isRob && (
-                  <Button variant="primary" disabled={!cases || !chosen || busy} onClick={() => setConfirming(true)}>Upload to Google Ads</Button>
+                  <Button variant="primary" disabled={!cases || !chosen || busy} onClick={() => setConfirming("file")}>Upload to Google Ads</Button>
                 )}
                 {isRob && (
                   <label className="flex items-center gap-2 text-xs text-ink-muted">
@@ -206,10 +227,13 @@ export default function CaseMatchPage() {
                   { key: "when", label: "Run", value: (r) => r.created_at, render: (r) => dateTime(r.created_at) },
                   { key: "month", label: "Month", value: (r) => r.month.slice(0, 7) },
                   { key: "kind", label: "Type", value: (r) => (r.validate_only ? "check" : "upload"), render: (r) => (r.validate_only ? <Pill>check</Pill> : <Pill tone="good">upload</Pill>) },
-                  { key: "in", label: "Cases", align: "right", value: (r) => r.cases_in },
-                  { key: "skipped", label: "Skipped", align: "right", value: (r) => r.skipped },
-                  { key: "accepted", label: "Accepted", align: "right", value: (r) => r.accepted },
+                  { key: "in", label: "In", align: "right", value: (r) => r.cases_in },
+                  { key: "matched", label: "Matched", align: "right", value: (r) => r.matched ?? 0 },
+                  { key: "accepted", label: "Uploaded", align: "right", value: (r) => (r.validate_only ? null : r.accepted), render: (r) => (r.validate_only ? <span className="text-ink-subtle">check</span> : r.accepted) },
                   { key: "rejected", label: "Rejected", align: "right", value: (r) => r.rejected },
+                  { key: "unattributed", label: "Unattributed", align: "right", value: (r) => r.unattributed ?? 0 },
+                  { key: "skipped", label: "No id", align: "right", value: (r) => r.skipped },
+                  { key: "types", label: "Case types", value: (r) => Object.entries(r.case_types ?? {}).map(([k, n]) => `${k} ${n}`).join(", ") },
                   { key: "value", label: "Value", align: "right", value: (r) => Number(r.value_total), render: (r) => money(Number(r.value_total), r.currency_code) },
                   {
                     key: "status", label: "Status", value: (r) => r.status,
@@ -231,19 +255,19 @@ export default function CaseMatchPage() {
         )}
       </div>
 
-      {confirming && summary && (
+      {confirming && (confirming === "ghl" || summary) && (
         <ConfirmDialog
           title={`Upload ${month} cases to Google Ads?`}
           message={
             <div className="space-y-2">
-              <p>{summary.rows} case(s) go to Google Ads as "FF - Signed case" conversions. Google checks them first; every attempt is logged.</p>
+              <p>{confirming === "ghl" ? "The won opportunities of this month in GHL" : `${summary?.rows ?? 0} case(s)`} go to Google Ads as "Case signed" conversions. Google checks them first; every attempt is logged.</p>
               <p>Uploaded conversions cannot be taken back. Upload each case only once.</p>
             </div>
           }
           confirmLabel="Upload"
           busy={busy}
-          onCancel={() => setConfirming(false)}
-          onConfirm={() => run("upload")}
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => run("upload", confirming)}
         />
       )}
     </main>

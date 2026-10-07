@@ -102,6 +102,11 @@ if (applyError) {
     { status: 502, body: { error: `The change passed validation but Google Ads did not apply it: ${applyError}` } });
 }
 
+if (plan.source === 'neglist') {
+  return out([logWrite([validatedRow, logRow(false, 'ok', gadsBody(applied))])],
+    { status: 200, body: { ok: true, steps: plan.action.steps, note: 'Done. The dashboard shows it after the next sync.' } });
+}
+
 if (plan.source === 'negatives') {
   // Only the log here: the new negatives arrive in the negatives table (and the
   // "Already negative" column) with the next sync.

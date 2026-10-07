@@ -162,7 +162,7 @@ with B's ids gets 403).
 | OpenAI key | n8n credential "FF OpenAI" | FF, in n8n |
 | Slack bot token | n8n credential "FF Slack" | FF, in n8n |
 | DataForSEO login + password | n8n credential "FF DataForSEO" | FF, in n8n |
-| GHL agency-level private integration key (one for all clients; per client it is exchanged for a sub-account token at run time) | n8n credential "FF GHL" (Header Auth) | FF, in n8n (added 2026-10-02, agency key approved by Robin) |
+| GHL access for every client: FF's private GHL Marketplace app (installed by the agency on each sub-account; the agency token is exchanged for a sub-account token at run time). Replaces the agency private integration key (2026-10-06), which cannot open sub-accounts | n8n credential "FF GHL OAuth" (OAuth2) | FF, in n8n |
 | Google Sheets login (client Sheets) | n8n credential "FF Google Sheets" (OAuth2) | FF, in n8n (added 2026-10-02) |
 
 How the Google Ads values stay safe:
@@ -679,6 +679,7 @@ Each reference workflow maps to one FF workflow of the same shape.
 | `ff-dataforseo` | new | Weekly schedule + `/ff/dataforseo-refresh` | ff_staff, rob_admin | none | Phase 7 |
 | `ff-weekly-report` | new (PDF task 8) | Monday 08:00 + `/ff/weekly-report` - fills `weekly_stats` and `tracking_health` from `ff_weekly_report()`, counts GHL leads tagged "from google ads" (count only), writes one row to the client's Google Sheet, Slack note to Rob (schedule only, or `slack: true`). Keeps no execution data (the GHL answer can hold a contact) | ff_staff, rob_admin | none | Built 2026-10-02 |
 | `ff-case-match` | new (PDF task 6) | `/ff/case-match` - check (validateOnly) or upload the no-name monthly case list as offline conversions: click ids, hashed email/phone (enhanced conversions for leads), call conversions. Counts to `case_match_runs`, summaries to `write_log`. Keeps no execution data | check: ff_staff, rob_admin; upload: rob_admin | write (uploads) | Built 2026-10-05 |
+| `ff-search-triage` | new (PDF task 5) | Monday 07:30 + `/ff/search-triage` - sorts new search terms (last 7 days, not name-filtered) into keep / block / ask Rob: FF blocked words, own name and competitors by rule, the rest by the AI, unclear to Rob. Saves to `search_term_triage`, never overwrites a decision | ff_staff, rob_admin | none | Built 2026-10-06 |
 | `ff-gaql` | new (PDF task 1) | `/ff/gaql` - one read-only GAQL query for Claude Code (`scripts/ff.mjs gaql`) and staff. Caller phone fields refused; search terms name-filtered; no execution data | ff_staff, rob_admin | none | Built 2026-10-05 |
 | `ff-ghl-setup` | new (PDF task 3) | `/ff/ghl-setup` - `list_locations` (sub-account picker on Edit client), `check` / `setup`: the FF GHL key reaches the client's location; creates the contact fields gclid, gbraid, wbraid, utm_* and the tag "from google ads" if missing. Nothing else in GHL changes | ff_staff, rob_admin | none | Built 2026-10-02 |
 
@@ -702,14 +703,17 @@ budget or status change; upserts via PostgREST `on_conflict`.
 - A write to an account where `is_test_account = false` is refused unless `clients.writes_enabled = true`,
   which only `rob_admin` can set, after the same operation has succeeded on the test account (recorded in `write_log`).
 - Positive keywords: PHRASE or EXACT only, 5-15 per ad group (validated before any call). Max 2 RSAs per ad group.
-- The reference's generic 149-term list is replaced by the FF shared list "FF Universal Negatives":
-  - obituaries: obituary, obituaries, obits, condolences, service times
-  - jobs: careers, jobs, salary, hiring, mortuary school, embalmer training
-  - products: urns, urn, jewelry, flowers, caskets for sale
-  - writing: poems, poem, eulogy, eulogies, quotes, readings
-  - free: free, body donation
-  - competitor names from `clients.competitor_terms` (a per-client list, not shared)
-  - Match types for each term are set in Phase 6 with Rob. The list lives in a config node, not scattered across code.
+- The reference's generic 149-term list is replaced by the FF shared list "FF - Funeral universal negatives"
+  (2026-10-06; the older name "FF Universal Negatives" is still recognised):
+  - the words live in Supabase `universal_negatives` (themes: obituaries, jobs, products, writing, etiquette, free),
+    shown on the client page (Blocked searches > Show the word list) and read by n8n
+  - each account's list also holds the client's own name (`own_brand_terms`, else the client name) and
+    `clients.competitor_terms`, phrase match
+  - Rob's one click per account (client page > Blocked searches) creates the list if missing, adds missing words and
+    attaches it to every search campaign; ff-build-campaign attaches it to new campaigns
+  - every Monday 07:30 `ff-search-triage` sorts new search terms into keep / block / ask Rob (FF words and names by
+    rule, the rest by the AI, unclear to Rob) into `search_term_triage` (`decided_how` = person / rule / ai). Adding
+    the negatives in Google Ads stays Rob's click (Search Terms > Pick all marked Block > Add as negative).
 - Every write is logged to `write_log` and posted to Slack.
 
 ---

@@ -20,6 +20,7 @@ type CallTrackingRow = {
   form_send_to: string | null;
   has_account_call_asset: boolean;
   search_campaigns_without_call_asset: number;
+  has_case_signed: boolean;
 };
 
 // The website script for this client, filled from Google Ads (the AW-.../label
@@ -86,6 +87,7 @@ export default function CallTracking({ clientId, phone }: { clientId: string; ph
     ['"Calls from ads 90s+"', r.has_ad_call_90],
     ['"Calls from website 90s+"', r.has_website_call_90],
     ["Call asset on every campaign", r.has_account_call_asset || r.search_campaigns_without_call_asset === 0],
+    ['"Case signed" (for the monthly case match)', r.has_case_signed],
   ];
 
   return (
@@ -130,7 +132,7 @@ export default function CallTracking({ clientId, phone }: { clientId: string; ph
           title={`Set up call tracking for ${confirm.descriptive_name ?? customerId(confirm.customer_id)}?`}
           message={
             <div className="space-y-2">
-              <p>Only what is missing is changed in Google Ads: call reporting and auto-tagging on; the account's call conversion actions set to count calls of 90 seconds or more (created if there are none); and, if a campaign shows no phone number, a call asset with {phone || "the business phone"} on the whole account.</p>
+              <p>Only what is missing is changed in Google Ads: call reporting and auto-tagging on; the account's call conversion actions set to count calls of 90 seconds or more (created if there are none); "Case signed" for the monthly case match; and, if a campaign shows no phone number, a call asset with {phone || "the business phone"} on the whole account.</p>
               <p>Google checks every change first. Every attempt is logged. Nothing records calls.</p>
             </div>
           }
