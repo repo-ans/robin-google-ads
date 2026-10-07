@@ -2,7 +2,7 @@
   "name": "ff-client-admin",
   "nodes": [
     {
-      "id": "38d0e7df-001e-4327-a4ff-7d8672931207",
+      "id": "1bc5cc95-de5d-4edc-83fd-a223955db210",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -22,7 +22,7 @@
       "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
     },
     {
-      "id": "ed12aaf7-4063-4f3f-b551-db7dfbdfd09a",
+      "id": "6b69f5a6-a114-47f7-8d48-3ba6294a2a7b",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -36,7 +36,7 @@
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
     },
     {
-      "id": "f9b223f1-da53-446d-b323-0d7901e1826c",
+      "id": "dfb1a976-4848-4b2e-ad77-e2f291f7364d",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -50,7 +50,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "98a2f8b8-445b-4efc-934f-ec82bc14150b",
+      "id": "fe5710fa-af11-4a30-a147-a104eb5095e6",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -86,7 +86,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "e3ca3835-8152-4a2f-a182-5c92bd55d819",
+      "id": "938e84d7-da93-44b8-9223-c735185985cd",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -131,7 +131,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "6d7e22f8-bab5-4e21-8a5a-6d88c5a9a6ae",
+      "id": "a4735882-665d-4e1b-81e8-a6d4968a5863",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -145,7 +145,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "a47633ef-172c-4693-ba52-6d8f6879c877",
+      "id": "9286ec42-80d0-47ee-bb63-941df5011e2b",
       "parameters": {
         "conditions": {
           "options": {
@@ -178,7 +178,7 @@
       ]
     },
     {
-      "id": "f315d687-fcce-49d6-a3f6-66f26c51b921",
+      "id": "cd30d3b3-159d-4ee1-9ae7-fe0661afe66d",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -196,7 +196,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "576497fa-df45-44eb-b6f4-ff32820d1992",
+      "id": "66863be9-b030-4e95-aa9b-5aa80df29d6e",
       "name": "Load target login",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -220,7 +220,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "aae407a0-9645-416c-b1d1-93b19eb86762",
+      "id": "99b856d9-41dd-419d-97fc-350717cf8f16",
       "name": "Plan",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -233,7 +233,7 @@
       }
     },
     {
-      "id": "1f072f46-c5a7-4327-af7e-abd1e485ac78",
+      "id": "5298e967-cfa2-40ab-adb1-3270aec970f7",
       "name": "Plan ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -250,7 +250,7 @@
           },
           "conditions": [
             {
-              "id": "9ce14ac4-180a-42f2-bb31-62f281cf6c00",
+              "id": "c1a22f03-82f4-4753-8a00-9f74fdbdc3ee",
               "leftValue": "={{ $json.valid === true }}",
               "rightValue": true,
               "operator": {
@@ -266,7 +266,7 @@
       }
     },
     {
-      "id": "c1dbc649-8ae9-4463-b7ce-9d7fe4d121bd",
+      "id": "e19306c8-95ab-4ff8-ae16-31026ad5fae8",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -283,7 +283,7 @@
       }
     },
     {
-      "id": "b346ddb6-e18a-4cf5-869f-d708262fee44",
+      "id": "3967bfd6-5d5b-4bdb-9075-ef2702f60571",
       "name": "Create login?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -300,7 +300,7 @@
           },
           "conditions": [
             {
-              "id": "a0ceb6d6-a14f-40b2-b77e-e99fe1e9c723",
+              "id": "8ea1de47-2e8b-4e3a-8d51-b351c0990121",
               "leftValue": "={{ $json.kind === 'create_login' }}",
               "rightValue": true,
               "operator": {
@@ -316,7 +316,7 @@
       }
     },
     {
-      "id": "3e589f07-c8f8-495e-a53f-c7e3c7474cf8",
+      "id": "4aa9b25d-f0e8-4522-9ccb-43a385e546da",
       "name": "Run requests",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -366,7 +366,7 @@
       "notes": "Auth Admin API (auth/v1/admin/users) and PostgREST, both with the service role credential. One request at a time, in order (a new client row before its Google Ads account link)."
     },
     {
-      "id": "ddf31b46-cd16-4b3a-9ed9-2e9548c45e55",
+      "id": "f5a89d2c-3b0b-4315-958f-0f362e875527",
       "name": "Summarize",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -379,7 +379,7 @@
       }
     },
     {
-      "id": "8cb69c28-bcc6-441c-8092-ff085218fd09",
+      "id": "9fffad5d-344e-42bd-9c09-9f7178b578fe",
       "name": "Create auth user",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -413,7 +413,7 @@
       "notes": "Supabase Auth Admin API. The password is not stored anywhere else and is never returned."
     },
     {
-      "id": "96700910-b86f-421e-b12e-d01f53b5056a",
+      "id": "c690b10d-2f9c-4d59-a643-19f9fb024333",
       "name": "Check user",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -426,7 +426,7 @@
       }
     },
     {
-      "id": "a0a21a34-4b23-470a-897e-912381dd7c63",
+      "id": "aae46d9d-0fe3-429a-a231-e5ae43d39f03",
       "name": "User created?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -443,7 +443,7 @@
           },
           "conditions": [
             {
-              "id": "dc920753-6425-471f-994a-91ead7c77cf2",
+              "id": "bd5dcabf-072a-4567-b0b2-9cf7b2aee87f",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -459,7 +459,7 @@
       }
     },
     {
-      "id": "b89d013c-346c-434f-bf0c-b4e0cd3d2a64",
+      "id": "98767303-a8b0-4e79-8601-590605d9051e",
       "name": "Save profile",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -501,7 +501,7 @@
       }
     },
     {
-      "id": "0b5b6dd5-20f4-48db-a906-5808c8a3d6ef",
+      "id": "1a2c6899-70ee-4cbe-be3c-de28ddc27a95",
       "name": "Check profile",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -514,7 +514,7 @@
       }
     },
     {
-      "id": "066a65ea-2d50-4278-84d7-04b3f93e3486",
+      "id": "c3c8026b-dd75-4e9f-bdc7-93fa79a58719",
       "name": "Profile saved?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -531,7 +531,7 @@
           },
           "conditions": [
             {
-              "id": "4ef09ee2-808e-40e6-88b8-2cbac8e208c3",
+              "id": "76a96d4b-b239-4f19-94e4-7ce5a5c70817",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -547,7 +547,7 @@
       }
     },
     {
-      "id": "83f310fc-32bf-41a1-baf1-70d6536a6044",
+      "id": "0fcaa587-aa0a-428e-9b58-d1fb0ff98b5e",
       "name": "Remove auth user",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -578,7 +578,7 @@
       "notes": "Undo: no login may exist without a profile (role)."
     },
     {
-      "id": "1c332646-a87f-4962-b75f-1f9285d4034a",
+      "id": "9a455245-7021-49ee-99ca-10f6ba1d2f3d",
       "name": "Profile failed",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,

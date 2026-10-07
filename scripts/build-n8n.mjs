@@ -46,15 +46,29 @@ const ghlAuthHeaders = (tokenNode) => ({
   ...GHL_HEADERS,
   Authorization: `=Bearer {{ ($('${tokenNode}').first().json.body || {}).access_token || 'missing' }}`,
 });
+// Two nodes: "GHL: find agency" (which agency the sub-account belongs to - so
+// nobody has to find GHL's company id by hand) then the token for that sub-account.
+// Callers connect into "GHL: find agency". Config GHL_COMPANY_ID is only a fallback.
 function ghlLocationToken(wf, name, pos, locationExpr) {
-  return wf.http(name, pos, {
+  wf.http("GHL: find agency", [pos[0] - 110, pos[1] + 120], {
+    method: "GET", cred: "ghl", url: `=${GHL_API}/locations/{{ ${locationExpr} }}`, headers: GHL_HEADERS, full: true, neverError: true,
+  }, {
+    onError: "continueRegularOutput",
+    notes: "The agency (company) id of this sub-account, read with FF's GHL app. Used for the sub-account token below.",
+  });
+  wf.http(name, pos, {
     method: "POST", cred: "ghl", url: `${GHL_API}/oauth/locationToken`, headers: GHL_HEADERS,
-    form: { companyId: "={{ $('Config').first().json.GHL_COMPANY_ID }}", locationId: `={{ ${locationExpr} }}` },
+    form: {
+      companyId: "={{ ((($('GHL: find agency').first().json.body || {}).location) || {}).companyId || $('Config').first().json.GHL_COMPANY_ID }}",
+      locationId: `={{ ${locationExpr} }}`,
+    },
     full: true, neverError: true,
   }, {
     onError: "continueRegularOutput",
-    notes: "Agency key (FF GHL) -> a short-lived token for this client's sub-account. Needs GHL_COMPANY_ID in Config and the oauth scopes on the agency key.",
+    notes: "FF GHL app (agency) -> a short-lived token for this client's sub-account. The app must be installed on the sub-account.",
   });
+  wf.connect("GHL: find agency", name);
+  return name;
 }
 const SB = "{{ $('Config').first().json.SUPABASE_URL }}";
 const API_V = "{{ $('Config').first().json.GOOGLE_ADS_API_VERSION }}";
@@ -1022,7 +1036,8 @@ function buildCaseMatch() {
   wf.connect(ok, "From GHL?", 0);
   wf.connect("From GHL?", "Get client GHL", 0);
   wf.connect("From GHL?", "Get case match context", 1);
-  wf.chain("Get client GHL", "GHL: location token", "GHL: contact fields", "GHL: won opportunities", "GHL: won in month", "Won cases?");
+  wf.chain("Get client GHL", "GHL: find agency");
+  wf.chain("GHL: location token", "GHL: contact fields", "GHL: won opportunities", "GHL: won in month", "Won cases?");
   wf.connect("Won cases?", "GHL: get contacts", 0);
   wf.connect("Won cases?", "GHL: build cases", 1);
   wf.chain("GHL: get contacts", "GHL: build cases", "Get case match context");
@@ -1423,7 +1438,7 @@ function buildWeeklyReport() {
   wf.connect("Any clients?", "Get week rows", 1);
   wf.connect("Loop over clients", "Get week rows", 0);
   wf.connect("Loop over clients", "GHL set up?", 1);
-  wf.connect("GHL set up?", "GHL: location token", 0);
+  wf.connect("GHL set up?", "GHL: find agency", 0);
   wf.connect("GHL: location token", "GHL: count Google Ads leads");
   wf.connect("GHL set up?", "Build client report", 1);
   wf.chain("GHL: count Google Ads leads", "Build client report", "Save weekly stats", "Save tracking health", "Google Sheet set?");
@@ -1481,7 +1496,7 @@ function buildGhlSetup() {
   wf.connect("List locations?", "Get client", 1);
   wf.chain("GHL: list locations", "Format locations", "Respond");
   wf.chain("Get client", "Check client", "Client ok?");
-  wf.connect("Client ok?", "GHL: location token", 0);
+  wf.connect("Client ok?", "GHL: find agency", 0);
   wf.connect("Client ok?", "Respond", 1);
   wf.chain("GHL: location token", "GHL: get custom fields", "GHL: get tags", "Plan", "Anything to create?");
   wf.connect("Anything to create?", "GHL: create", 0);
