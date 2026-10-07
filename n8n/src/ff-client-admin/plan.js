@@ -47,7 +47,10 @@ function clientFields(src) {
   if ('service_area_notes' in src) f.service_area_notes = text(src.service_area_notes, 1000) || null;
   if ('process' in src) {
     if (!['funeral_home', 'online_cremation'].includes(src.process)) errors.push('Process must be funeral_home or online_cremation.');
-    else f.process = src.process;
+    else {
+      f.process = src.process;
+      f.process_source = 'manual'; // set by FF - the daily website check no longer changes it
+    }
   }
   if ('currency_code' in src) {
     const c = String(src.currency_code || '').toUpperCase();

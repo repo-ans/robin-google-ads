@@ -216,6 +216,27 @@ if (v.source === 'tracking') {
     opTypes.push(type);
     steps.push(`"${name}" created for the monthly case match`);
   }
+  // Website actions by the client's process (tasks 3 and 7). Their AW-.../label
+  // values reach the dashboard's "Copy website script" with the next sync.
+  const websiteActions = t.process === 'online_cremation'
+    ? [
+      ['PURCHASE', 'Online arrangement paid', { primaryForGoal: true, countingType: 'MANY_PER_CLICK' }],
+      ['BEGIN_CHECKOUT', 'Arrangement started', { primaryForGoal: false, countingType: 'ONE_PER_CLICK' }],
+    ]
+    : [['SUBMIT_LEAD_FORM', 'Preplanning form', { primaryForGoal: true, countingType: 'ONE_PER_CLICK' }]];
+  for (const [category, name, extra] of websiteActions) {
+    if (actions.some((a) => a.type === 'WEBPAGE' && a.category === category && a.status === 'ENABLED')) continue;
+    ops.push({
+      create: {
+        name, type: 'WEBPAGE', category, status: 'ENABLED', ...extra,
+        ...(category === 'PURCHASE'
+          ? { valueSettings: { ...(value ? { defaultValue: value } : {}), alwaysUseDefaultValue: false, ...(t.currency_code ? { defaultCurrencyCode: t.currency_code } : {}) } }
+          : {}),
+      },
+    });
+    opTypes.push('WEBPAGE');
+    steps.push(`"${name}" created for the website`);
+  }
   if (ops.length) requestsA.push({ label: 'conversion_actions', url_suffix: '/conversionActions:mutate', op_types: opTypes, body: { operations: ops } });
   if (needAsset) steps.push(`Call asset ${phone} added to the whole account (every campaign shows it)`);
 

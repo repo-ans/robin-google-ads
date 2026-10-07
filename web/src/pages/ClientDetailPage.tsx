@@ -13,8 +13,8 @@ import DataTable from "../components/DataTable";
 import DateRangePicker from "../components/DateRangePicker";
 import ClientForm from "../components/ClientForm";
 import MessageThread from "../components/MessageThread";
-import CallTracking from "../components/CallTracking";
-import BlockedSearches from "../components/BlockedSearches";
+import ClientSetup from "../components/ClientSetup";
+import ProfitSummary from "../components/ProfitSummary";
 import { Button, ConfirmDialog, ErrorNote, Notice, PageSkeleton, Pill, Section, StatCard, StatusPill, linkButtonClass } from "../components/ui";
 
 type TrackingFlag = { customer_id: string; name: string; last_conversion_date: string | null; flag_no_recent_conversions: boolean; flag_call_duration_not_90s: boolean; phone_call_duration_seconds: number | null };
@@ -88,7 +88,6 @@ export default function ClientDetailPage() {
   const qs = `?range=${range.key}${range.key === "custom" ? `&from=${range.from}&to=${range.to}` : ""}`;
   const online = client.process === "online_cremation";
   const latestWeek = data.weeks[0];
-  const issues = data.health.filter((h) => h.flag_auto_tagging_off || h.flag_call_reporting_off || h.campaigns_not_presence_only > 0).length + data.flags.length;
 
   return (
     <main className="min-h-screen bg-page px-4 py-8 text-ink sm:px-6 sm:py-10">
@@ -104,10 +103,6 @@ export default function ClientDetailPage() {
             <Link to={`/dashboard/clients/${clientId}/users`} className={linkButtonClass}>Client logins</Link>
             <Link to={`/dashboard/clients/${clientId}/audit`} className={linkButtonClass}>Audit</Link>
             <Link to={`/dashboard/clients/${clientId}/case-match`} className={linkButtonClass}>Case match</Link>
-            <Link to={`/dashboard/clients/${clientId}/builder`} className={linkButtonClass}>Campaign builder</Link>
-            <Button size="sm" disabled={!!busy} onClick={() => act("kw", () => actions.keywordResearch(clientId), "Keyword research started. Volumes appear in the Keywords tab when it finishes.")}>
-              Refresh keyword data
-            </Button>
             {isRob && (
               <Button size="sm" variant={client.writes_enabled ? "danger" : "subtle"} disabled={!!busy}
                 onClick={() => act("writes", () => actions.clientAdmin({ action: "set_writes_enabled", client_id: clientId, enabled: !client.writes_enabled }))}>
@@ -124,6 +119,7 @@ export default function ClientDetailPage() {
         {message && <p className="no-print mt-3 text-sm text-ink-muted">{message}</p>}
 
         <div className="mt-6 flex justify-end"><DateRangePicker range={range} /></div>
+        <ProfitSummary clientId={clientId} from={range.from} to={range.to} periodLabel={range.label} />
 
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <StatCard label="Cost" value={moneyMicros(cost, currency)} />
@@ -181,56 +177,32 @@ export default function ClientDetailPage() {
           />
         </Section>
 
-        <Section
-          title="Tracking health"
-          hint="From the latest sync. The SOP counts calls of 90 seconds or more and preplanning forms."
-          actions={agency ? (
-            <>
-              <Button size="sm" disabled={!!busy || !client.ghl_location_id} onClick={() => act("ghl-check", () => actions.ghlSetup("check", clientId))}>Check GHL</Button>
-              <Button size="sm" disabled={!!busy || !client.ghl_location_id} onClick={() => act("ghl-setup", () => actions.ghlSetup("setup", clientId))}>Set up GHL fields</Button>
-            </>
-          ) : undefined}
-        >
-          {issues === 0 ? (
-            <p className="text-sm text-success">No tracking problems found.</p>
-          ) : (
-            <ul className="space-y-2 text-sm">
-              {data.health.map((h) => (
-                <li key={h.customer_id}>
-                  {h.flag_auto_tagging_off && <Notice>{h.descriptive_name ?? h.customer_id}: auto-tagging is off, so forms cannot capture the GCLID.</Notice>}
-                  {h.flag_call_reporting_off && <div className="mt-2"><Notice>{h.descriptive_name ?? h.customer_id}: call reporting is off, so calls of 90s+ cannot be counted.</Notice></div>}
-                  {h.campaigns_not_presence_only > 0 && <div className="mt-2"><Notice>{h.descriptive_name ?? h.customer_id}: {h.campaigns_not_presence_only} enabled campaign(s) also target people only interested in the area.</Notice></div>}
-                </li>
-              ))}
-              {data.flags.map((f) => (
-                <li key={`${f.customer_id}-${f.name}`}>
-                  <Notice>
-                    {f.flag_no_recent_conversions && <>"{f.name}" has had spend but no conversions for 14+ days (last: {f.last_conversion_date ?? "never"}). </>}
-                    {f.flag_call_duration_not_90s && <>"{f.name}" counts calls of {f.phone_call_duration_seconds ?? "the default"} seconds, not 90.</>}
-                  </Notice>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
-
-        {agency && <CallTracking clientId={clientId} phone={client.phone} />}
-        {agency && <BlockedSearches clientId={clientId} clientName={client.name} competitors={client.competitor_terms ?? []} ownBrand={client.own_brand_terms ?? []} />}
+        {agency && (
+          <ClientSetup
+            client={client}
+            warnings={[
+              ...data.health.flatMap((h) => [
+                ...(h.flag_auto_tagging_off ? [`${h.descriptive_name ?? h.customer_id}: auto-tagging is off, so forms cannot capture the ad click.`] : []),
+                ...(h.flag_call_reporting_off ? [`${h.descriptive_name ?? h.customer_id}: call reporting is off, so calls of 90s+ cannot be counted.`] : []),
+                ...(h.campaigns_not_presence_only > 0 ? [`${h.descriptive_name ?? h.customer_id}: ${h.campaigns_not_presence_only} enabled campaign(s) also target people only interested in the area.`] : []),
+              ]),
+              ...data.flags.map((f) => [
+                f.flag_no_recent_conversions ? `"${f.name}" has had spend but no conversions for 14+ days (last: ${f.last_conversion_date ?? "never"}).` : "",
+                f.flag_call_duration_not_90s ? `"${f.name}" counts calls of ${f.phone_call_duration_seconds ?? "the default"} seconds, not 90.` : "",
+              ].filter(Boolean).join(" ")),
+            ]}
+          />
+        )}
 
         <Section
           title="Weekly report"
           hint="Monday to Sunday, made every Monday morning. The same row goes to the client's Google Sheet, and a short note to Rob on Slack."
-          actions={agency ? (
-            <Button size="sm" disabled={!!busy} onClick={() => act("weekly", () => actions.weeklyReport({ client_id: clientId }), "Weekly report started for last week. Reload in a minute.")}>
-              Run for last week
-            </Button>
-          ) : undefined}
         >
           <DataTable
             rows={data.weeks}
             rowKey={(w) => w.week_start}
             csvName={`${client.slug}-weekly`}
-            empty="No weekly report yet. The first one is made next Monday, or with Run for last week."
+            empty="No weekly report yet. The first one is made by itself next Monday."
             columns={[
               { key: "week", label: "Week", value: (w) => w.week_start, render: (w) => `${date(w.week_start)} - ${date(w.week_end)}` },
               { key: "cost", label: "Spend", align: "right", value: (w) => w.cost_micros / 1e6, render: (w) => moneyMicros(w.cost_micros, w.currency_code) },
@@ -272,16 +244,6 @@ export default function ClientDetailPage() {
               { key: "id", label: "Customer ID", value: (a) => customerId(a.customer_id), render: (a) => <>{customerId(a.customer_id)} {a.is_test_account && <Pill tone="info">test</Pill>}</> },
               { key: "currency", label: "Currency", value: (a) => a.currency_code ?? "" },
               { key: "synced", label: "Last synced", value: (a) => a.last_synced_at ?? "", render: (a) => dateTime(a.last_synced_at) },
-              ...(agency
-                ? [{
-                  key: "sync", label: "", noCsv: true, noPrint: true, value: () => null,
-                  render: (a: AdAccount) => (
-                    <Button size="sm" disabled={!!busy} onClick={() => act(`sync-${a.customer_id}`, () => actions.syncNow(a.customer_id), "Sync started for this account.")}>
-                      Sync this account
-                    </Button>
-                  ),
-                }]
-                : []),
             ]}
           />
         </Section>
@@ -291,7 +253,7 @@ export default function ClientDetailPage() {
         </Section>
       </div>
 
-      {editing && <ClientForm client={client} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); reload(); }} />}
+      {editing && <ClientForm client={client} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); actions.websiteCheck(clientId).catch(() => undefined); reload(); }} />}
       {removing && (
         <ConfirmDialog
           title={`Remove "${removing.name}" in Google Ads?`}

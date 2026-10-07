@@ -2,7 +2,7 @@
   "name": "ff-apply-campaign-action",
   "nodes": [
     {
-      "id": "c812eb49-0bd0-4b75-8835-95652a9d4ccf",
+      "id": "a6985c34-a7fb-4698-9d75-a6e6fa6f9aa0",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -22,7 +22,7 @@
       "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
     },
     {
-      "id": "8087aae9-84d5-41ba-94b8-d2c6728fc2f5",
+      "id": "3d28c4db-0d8e-4cc2-b546-6f0150d98011",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -36,7 +36,7 @@
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
     },
     {
-      "id": "4f5d6f49-aa59-4deb-a641-a2f297f1c825",
+      "id": "5600edf7-d9a3-46c0-a56f-5c6d62ccb155",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -50,7 +50,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "cdaa824b-ff5c-429f-8e39-c392efd47d38",
+      "id": "d6c5a319-4bca-43be-9675-7e0072da92fe",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -86,7 +86,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "86751226-b255-4aaf-bda1-28a683464c47",
+      "id": "314200e6-dce3-46d6-a635-7d8c70ad0657",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -131,7 +131,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "86d0a7e0-a33b-41d9-92d3-fc6f2c13f4b9",
+      "id": "15df483c-0cc3-432f-be83-b17db994301f",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -145,7 +145,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "65f8d6bc-9668-4d29-be5a-5a3c3d550b31",
+      "id": "ae9a7a8b-85cf-4e9e-8d6e-1b20f0f2dfe4",
       "parameters": {
         "conditions": {
           "options": {
@@ -178,7 +178,7 @@
       ]
     },
     {
-      "id": "de8ce3b9-eda0-4657-9490-f97138e61509",
+      "id": "966ffcc1-7e12-4e3a-86d6-69faa0f2e282",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -196,7 +196,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "0c552549-0d0e-4671-8e72-644df3ebfd75",
+      "id": "fa30dbcb-07c8-4ccd-a28d-ce9d12a5a350",
       "name": "Validate input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -209,7 +209,7 @@
       }
     },
     {
-      "id": "8bc7d855-fc37-45db-a3a1-531fb85e69bb",
+      "id": "6eadebf9-a79d-47b2-b5da-b5ae52725c73",
       "name": "Validate input ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -226,7 +226,7 @@
           },
           "conditions": [
             {
-              "id": "789cf4c0-fa58-4322-93b7-351b11aa7c06",
+              "id": "a102a53d-a9dc-4b79-ad0f-0ae9bd6a007e",
               "leftValue": "={{ $json.valid === true }}",
               "rightValue": true,
               "operator": {
@@ -242,7 +242,7 @@
       }
     },
     {
-      "id": "6899e7ef-8b6d-4fb4-ad9e-4cb96319f85c",
+      "id": "0844cfe9-70bf-4992-8cad-03dfeda5ad7c",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -259,7 +259,7 @@
       }
     },
     {
-      "id": "f6b7a05d-fabb-44d7-b24c-c361772b6915",
+      "id": "1e6587c7-cd18-49ce-982d-b1b46806ea92",
       "name": "Get action context",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -285,7 +285,7 @@
       }
     },
     {
-      "id": "9381b9e6-5016-4ce0-882f-52dee86abcb3",
+      "id": "1f8eafa6-8a90-4c16-b460-19edf2a50390",
       "name": "Plan change",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -294,11 +294,11 @@
         200
       ],
       "parameters": {
-        "jsCode": "// ---- shared/ai.js (included by scripts/build-n8n.mjs) ----------------------\n// Checks and cleans what the AI returns before it is stored.\n\nconst ACTION_TYPES = ['update_daily_budget', 'pause_campaign', 'resume_campaign'];\n\n// Hard rule 6: calm tone, plain hyphens, no emoji.\nfunction cleanText(text) {\n  return String(text || '')\n    .replace(/[‒-―−]/g, '-')\n    .replace(/[‘’]/g, \"'\")\n    .replace(/[“”]/g, '\"')\n    .replace(/\\p{Extended_Pictographic}️?/gu, '')\n    .replace(/[ \\t]+\\n/g, '\\n')\n    .trim();\n}\n\n// Only the three reference action types survive; anything else becomes null.\n// daily_budget is in the account currency.\nfunction normalizeAction(a) {\n  if (!a || typeof a !== 'object' || !ACTION_TYPES.includes(a.action_type)) return null;\n  const out = { action_type: a.action_type, daily_budget: null, reason: cleanText(a.reason || '').slice(0, 300) };\n  if (a.action_type === 'update_daily_budget') {\n    const n = Number(a.daily_budget);\n    if (!(n > 0 && n < 100000)) return null;\n    out.daily_budget = Math.round(n * 100) / 100;\n  }\n  return out;\n}\n\nconst money = (micros) => Math.round(Number(micros || 0) / 1e4) / 100;\nconst pct = (v) => (v === null || v === undefined ? 'n/a' : `${Math.round(Number(v) * 100)}%`);\n// ---- end shared/ai.js -------------------------------------------------------\n\n// Builds the Google Ads change for a proposed action, after the guards:\n//   - the action is still \"proposed\" (applied or dismissed ones cannot run twice)\n//   - write gate: the account is a Google Ads test account, or rob_admin has\n//     turned writes on for this client (Rob's SOP: test account first)\n//   - a shared budget is never changed from one campaign\n//   - pause only an enabled campaign, resume only a paused one\n// Output { ok: false, status, error } stops here; the refusal is logged.\nconst cfg = $('Config').first().json;\nconst v = $('Validate input').first().json;\nconst ctx = $input.first().json || {};\n\nconst refuse = (status, error) => [{ json: { ok: false, status, error, ctx } }];\n\nif (!ctx.found) return refuse(404, v.source === 'negatives' ? 'That campaign was not found.' : 'That proposed change was not found.');\n\n// ---- Negative keywords from the Search Terms tab (PDF task 5)\nif (v.source === 'negatives') {\n  if (!ctx.is_test_account && !ctx.writes_enabled) {\n    return refuse(403, 'Writes are not turned on for this client yet. Test on the Google Ads test account first, then Rob can turn writes on in the client settings.');\n  }\n  const cid = ctx.customer_id;\n  const toList = v.level === 'list';\n  if (toList && !ctx.universal_list_id) {\n    return refuse(422, 'This account has no \"FF - Funeral universal negatives\" list yet. Rob can add it on the client page (Blocked searches > Set up blocked-words list), or add to the campaign instead.');\n  }\n  const norm = (t) => String(t).toLowerCase().replace(/\\s+/g, ' ').trim();\n  const existing = new Set(toList ? ctx.existing_list_negatives || [] : ctx.existing_campaign_negatives || []);\n  const fresh = v.terms.filter((t) => !existing.has(`${norm(t)}|${v.match_type}`));\n  const skipped = v.terms.length - fresh.length;\n  if (fresh.length === 0) return refuse(409, 'All of these are already negative keywords there.');\n  const keyword = (t) => ({ text: t, matchType: v.match_type });\n  const operations = toList\n    ? fresh.map((t) => ({ create: { sharedSet: `customers/${cid}/sharedSets/${ctx.universal_list_id}`, keyword: keyword(t) } }))\n    : fresh.map((t) => ({ create: { campaign: `customers/${cid}/campaigns/${ctx.campaign_id}`, negative: true, keyword: keyword(t) } }));\n  return [{\n    json: {\n      ok: true,\n      ctx,\n      action: { action_type: 'add_negatives', level: v.level, match_type: v.match_type, terms: fresh, skipped },\n      customer_id: cid,\n      login_customer_id: ctx.login_customer_id || null,\n      api_version: cfg.GOOGLE_ADS_API_VERSION,\n      url_suffix: toList ? 'sharedCriteria:mutate' : 'campaignCriteria:mutate',\n      mutate_body: { operations },\n      campaign_patch: null,\n      source: v.source,\n      source_id: v.source_id,\n    },\n  }];\n}\n\n// ---- Blocked-words list for one account (PDF task 5), any client, one click by Rob\n// One atomic googleAds:mutate: create \"FF - Funeral universal negatives\" if the\n// account has none, add the FF words that are missing plus the client's own name\n// and competitors, and attach the list to every search campaign without it.\n// Campaigns built later get it from ff-build-campaign.\nif (v.source === 'neglist') {\n  if (!ctx.is_test_account && !ctx.writes_enabled) {\n    return refuse(403, 'Writes are not turned on for this client yet. Test on the Google Ads test account first, then Rob can turn writes on in the client settings.');\n  }\n  const n = ctx.neglist || {};\n  const cid = ctx.customer_id;\n  if (!n.last_synced_at) return refuse(409, 'Sync this account first, so the current lists and campaigns are known.');\n\n  const clean = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9 '&.-]+/g, ' ').replace(/\\s+/g, ' ').trim();\n  const usable = (x) => x && x.length <= 80 && x.split(' ').length <= 10;\n  const words = [];\n  const seen = new Set();\n  const add = (text, matchType) => {\n    const t = clean(text);\n    const key = `${t}|${matchType}`;\n    if (usable(t) && !seen.has(key)) {\n      seen.add(key);\n      words.push({ text: t, match_type: matchType });\n    }\n  };\n  for (const u of n.universal || []) add(u.text, u.match_type);\n  // Robin: block the client's own name and competitors' names too (phrase match).\n  const brand = (n.own_brand_terms || []).length ? n.own_brand_terms : [n.client_name];\n  for (const b of brand) add(b, 'PHRASE');\n  for (const c of n.competitor_terms || []) add(c, 'PHRASE');\n\n  const have = new Set(n.list_terms || []);\n  const missing = words.filter((w) => !have.has(`${w.text}|${w.match_type}`));\n  const unlinked = (n.campaigns || []).filter((k) => !k.linked);\n\n  const ops = [];\n  let list = n.list_id ? `customers/${cid}/sharedSets/${n.list_id}` : null;\n  const steps = [];\n  if (!list) {\n    list = `customers/${cid}/sharedSets/-1`;\n    ops.push({ sharedSetOperation: { create: { resourceName: list, name: 'FF - Funeral universal negatives', type: 'NEGATIVE_KEYWORDS' } } });\n    steps.push('Created the list \"FF - Funeral universal negatives\"');\n  }\n  for (const w of missing) {\n    ops.push({ sharedCriterionOperation: { create: { sharedSet: list, keyword: { text: w.text, matchType: w.match_type } } } });\n  }\n  if (missing.length) steps.push(`Added ${missing.length} blocked word(s)`);\n  for (const k of unlinked) {\n    ops.push({ campaignSharedSetOperation: { create: { campaign: `customers/${cid}/campaigns/${k.id}`, sharedSet: list } } });\n  }\n  if (unlinked.length) steps.push(`Attached it to ${unlinked.length} campaign(s): ${unlinked.map((k) => k.name).join(', ').slice(0, 300)}`);\n  if (!ops.length) return refuse(409, 'The blocked-words list is already complete and on every search campaign.');\n\n  return [{\n    json: {\n      ok: true,\n      ctx,\n      action: { action_type: 'setup_negative_list', steps, added: missing.length, campaigns: unlinked.length },\n      customer_id: cid,\n      login_customer_id: ctx.login_customer_id || null,\n      api_version: cfg.GOOGLE_ADS_API_VERSION,\n      url_suffix: 'googleAds:mutate',\n      mutate_body: { mutateOperations: ops },\n      campaign_patch: null,\n      source: v.source,\n      source_id: v.source_id,\n    },\n  }];\n}\n\n// ---- Call tracking setup for one account (PDF task 2), any client, one click by Rob\n// Step A (this plan): account settings + the two 90-second call conversion actions.\n// Step B (\"Plan call asset\", after step A is applied): an account-level call asset\n// with the business number, counted by \"Calls from ads 90s+\". Account level means\n// every campaign shows it, including campaigns built later.\nif (v.source === 'tracking') {\n  if (!ctx.is_test_account && !ctx.writes_enabled) {\n    return refuse(403, 'Writes are not turned on for this client yet. Test on the Google Ads test account first, then Rob can turn writes on in the client settings.');\n  }\n  const t = ctx.tracking || {};\n  const cid = ctx.customer_id;\n  if (!t.last_synced_at) return refuse(409, 'Sync this account first, so the current settings are known.');\n\n  const digits = String(t.client_phone || t.asset_phone || '').replace(/\\D/g, '');\n  const national = digits.length === 11 && digits[0] === '1' ? digits.slice(1) : digits;\n  const phone = national.length === 10 ? `(${national.slice(0, 3)}) ${national.slice(3, 6)}-${national.slice(6)}` : null;\n  // A call asset is needed only when no account-level one exists and some enabled\n  // search campaign has none of its own (campaign-level assets already count).\n  const needAsset = !Number(t.account_call_assets) && Number(t.search_campaigns_without_call_asset ?? 1) > 0;\n  // Business numbers here are US or Canada; the account currency tells them apart.\n  const countryCode = t.currency_code === 'CAD' ? 'CA' : 'US';\n  if (needAsset && !phone) return refuse(422, 'No business phone found - add the funeral home\\'s number (US or Canada, 10 digits) under Edit client > Business phone.');\n\n  const steps = [];\n  const requestsA = [];\n  if (!t.call_reporting_enabled || !t.call_conversion_reporting_enabled || !t.auto_tagging_enabled) {\n    requestsA.push({\n      label: 'account',\n      url_suffix: ':mutate',\n      body: {\n        operation: {\n          update: {\n            resourceName: `customers/${cid}`,\n            autoTaggingEnabled: true,\n            callReportingSetting: { callReportingEnabled: true, callConversionReportingEnabled: true },\n          },\n          updateMask: 'autoTaggingEnabled,callReportingSetting.callReportingEnabled,callReportingSetting.callConversionReportingEnabled',\n        },\n      },\n    });\n    steps.push('Call reporting and auto-tagging turned on');\n  }\n\n  const actions = t.call_actions || [];\n  const value = t.case_value_micros ? Number(t.case_value_micros) / 1e6 : null;\n  const ops = [];\n  const opTypes = [];\n  let adCallAction = null;\n  for (const [type, name] of [['AD_CALL', 'Calls from ads 90s+'], ['WEBSITE_CALL', 'Calls from website 90s+']]) {\n    const good = actions.find((a) => a.type === type && a.status === 'ENABLED' && Number(a.seconds) === 90);\n    if (good) {\n      if (type === 'AD_CALL') adCallAction = `customers/${cid}/conversionActions/${good.id}`;\n      continue;\n    }\n    // The account already counts this kind of call (often at a shorter length):\n    // set those actions to 90 seconds instead of adding a second action, so one\n    // call is never counted twice.\n    const existing = actions.filter((a) => a.type === type && a.status === 'ENABLED');\n    const ours = actions.find((a) => a.type === type && a.name === name);\n    const toFix = existing.length ? existing : ours ? [ours] : [];\n    if (toFix.length) {\n      for (const a of toFix) {\n        ops.push({\n          update: { resourceName: `customers/${cid}/conversionActions/${a.id}`, status: 'ENABLED', phoneCallDurationSeconds: 90 },\n          updateMask: 'status,phoneCallDurationSeconds',\n        });\n        opTypes.push(type);\n        steps.push(`\"${a.name}\" now counts calls of 90 seconds or more (was ${a.seconds ?? 'the default'})`);\n      }\n      if (type === 'AD_CALL') adCallAction = `customers/${cid}/conversionActions/${toFix[0].id}`;\n      continue;\n    }\n    ops.push({\n      create: {\n        name, type, category: 'PHONE_CALL_LEAD', status: 'ENABLED', primaryForGoal: true,\n        countingType: 'ONE_PER_CLICK', phoneCallDurationSeconds: 90,\n        ...(value ? { valueSettings: { defaultValue: value, alwaysUseDefaultValue: true, ...(t.currency_code ? { defaultCurrencyCode: t.currency_code } : {}) } } : {}),\n      },\n    });\n    opTypes.push(type);\n    steps.push(`\"${name}\" created (90 seconds, primary)`);\n  }\n  // The monthly case match uploads signed cases to \"Case signed\" (Robin's name).\n  // Secondary goal: it is reported, but bidding is not switched to it - that is Rob's call.\n  for (const [type, name] of [['UPLOAD_CLICKS', 'Case signed'], ['UPLOAD_CALLS', 'Case signed - calls']]) {\n    const have = actions.find((a) => a.type === type && a.status === 'ENABLED' && /^(case signed|ff - signed case)/i.test(a.name || ''));\n    if (have) continue;\n    ops.push({\n      create: {\n        name, type, category: 'CONVERTED_LEAD', status: 'ENABLED', primaryForGoal: false, countingType: 'ONE_PER_CLICK',\n        ...(value ? { valueSettings: { defaultValue: value, alwaysUseDefaultValue: false, ...(t.currency_code ? { defaultCurrencyCode: t.currency_code } : {}) } } : {}),\n      },\n    });\n    opTypes.push(type);\n    steps.push(`\"${name}\" created for the monthly case match`);\n  }\n  if (ops.length) requestsA.push({ label: 'conversion_actions', url_suffix: '/conversionActions:mutate', op_types: opTypes, body: { operations: ops } });\n  if (needAsset) steps.push(`Call asset ${phone} added to the whole account (every campaign shows it)`);\n\n  if (!requestsA.length && !needAsset) return refuse(409, 'Call tracking is already set up for this account.');\n\n  return [{\n    json: {\n      ok: true,\n      ctx,\n      action: { action_type: 'setup_call_tracking', steps },\n      customer_id: cid,\n      login_customer_id: ctx.login_customer_id || null,\n      api_version: cfg.GOOGLE_ADS_API_VERSION,\n      mutate_body: { steps },\n      campaign_patch: null,\n      source: v.source,\n      source_id: v.source_id,\n      tracking: { requests_a: requestsA, ad_call_action: adCallAction, need_asset: needAsset, phone, country_code: countryCode },\n    },\n  }];\n}\n\nif (ctx.action_status !== 'proposed') return refuse(409, `This change is already ${ctx.action_status || 'closed'}.`);\nconst action = normalizeAction(ctx.proposed_action);\nif (!action) return refuse(422, 'The proposed change is not one of the supported actions.');\nif (!ctx.campaign_row_id) return refuse(404, 'The campaign is no longer in the dashboard.');\nif (!ctx.is_test_account && !ctx.writes_enabled) {\n  return refuse(403, 'Writes are not turned on for this client yet. Test on the Google Ads test account first, then Rob can turn writes on in the client settings.');\n}\n\nconst cid = ctx.customer_id;\nlet urlSuffix;\nlet operation;\nlet campaignPatch;\nif (action.action_type === 'update_daily_budget') {\n  if (!ctx.budget_id) return refuse(422, 'This campaign has no budget on file. Run a sync first.');\n  if (ctx.budget_shared) return refuse(422, 'This campaign uses a shared budget. Change it in Google Ads so other campaigns are not affected by surprise.');\n  const micros = Math.round(action.daily_budget * 1e6);\n  urlSuffix = 'campaignBudgets:mutate';\n  operation = {\n    update: { resourceName: `customers/${cid}/campaignBudgets/${ctx.budget_id}`, amountMicros: String(micros) },\n    updateMask: 'amountMicros',\n  };\n  campaignPatch = { budget_micros: micros };\n} else {\n  const target = action.action_type === 'pause_campaign' ? 'PAUSED' : 'ENABLED';\n  if (action.action_type === 'pause_campaign' && ctx.campaign_status !== 'ENABLED') return refuse(409, 'The campaign is not running.');\n  if (action.action_type === 'resume_campaign' && ctx.campaign_status !== 'PAUSED') return refuse(409, 'The campaign is not paused.');\n  urlSuffix = 'campaigns:mutate';\n  operation = {\n    update: { resourceName: `customers/${cid}/campaigns/${ctx.campaign_id}`, status: target },\n    updateMask: 'status',\n  };\n  campaignPatch = { status: target };\n}\n\nreturn [{\n  json: {\n    ok: true,\n    ctx,\n    action,\n    customer_id: cid,\n    login_customer_id: ctx.login_customer_id || null,\n    api_version: cfg.GOOGLE_ADS_API_VERSION,\n    url_suffix: urlSuffix,\n    mutate_body: { operations: [operation] },\n    campaign_patch: campaignPatch,\n    source: v.source,\n    source_id: v.source_id,\n  },\n}];\n"
+        "jsCode": "// ---- shared/ai.js (included by scripts/build-n8n.mjs) ----------------------\n// Checks and cleans what the AI returns before it is stored.\n\nconst ACTION_TYPES = ['update_daily_budget', 'pause_campaign', 'resume_campaign'];\n\n// Hard rule 6: calm tone, plain hyphens, no emoji.\nfunction cleanText(text) {\n  return String(text || '')\n    .replace(/[‒-―−]/g, '-')\n    .replace(/[‘’]/g, \"'\")\n    .replace(/[“”]/g, '\"')\n    .replace(/\\p{Extended_Pictographic}️?/gu, '')\n    .replace(/[ \\t]+\\n/g, '\\n')\n    .trim();\n}\n\n// Only the three reference action types survive; anything else becomes null.\n// daily_budget is in the account currency.\nfunction normalizeAction(a) {\n  if (!a || typeof a !== 'object' || !ACTION_TYPES.includes(a.action_type)) return null;\n  const out = { action_type: a.action_type, daily_budget: null, reason: cleanText(a.reason || '').slice(0, 300) };\n  if (a.action_type === 'update_daily_budget') {\n    const n = Number(a.daily_budget);\n    if (!(n > 0 && n < 100000)) return null;\n    out.daily_budget = Math.round(n * 100) / 100;\n  }\n  return out;\n}\n\nconst money = (micros) => Math.round(Number(micros || 0) / 1e4) / 100;\nconst pct = (v) => (v === null || v === undefined ? 'n/a' : `${Math.round(Number(v) * 100)}%`);\n// ---- end shared/ai.js -------------------------------------------------------\n\n// Builds the Google Ads change for a proposed action, after the guards:\n//   - the action is still \"proposed\" (applied or dismissed ones cannot run twice)\n//   - write gate: the account is a Google Ads test account, or rob_admin has\n//     turned writes on for this client (Rob's SOP: test account first)\n//   - a shared budget is never changed from one campaign\n//   - pause only an enabled campaign, resume only a paused one\n// Output { ok: false, status, error } stops here; the refusal is logged.\nconst cfg = $('Config').first().json;\nconst v = $('Validate input').first().json;\nconst ctx = $input.first().json || {};\n\nconst refuse = (status, error) => [{ json: { ok: false, status, error, ctx } }];\n\nif (!ctx.found) return refuse(404, v.source === 'negatives' ? 'That campaign was not found.' : 'That proposed change was not found.');\n\n// ---- Negative keywords from the Search Terms tab (PDF task 5)\nif (v.source === 'negatives') {\n  if (!ctx.is_test_account && !ctx.writes_enabled) {\n    return refuse(403, 'Writes are not turned on for this client yet. Test on the Google Ads test account first, then Rob can turn writes on in the client settings.');\n  }\n  const cid = ctx.customer_id;\n  const toList = v.level === 'list';\n  if (toList && !ctx.universal_list_id) {\n    return refuse(422, 'This account has no \"FF - Funeral universal negatives\" list yet. Rob can add it on the client page (Blocked searches > Set up blocked-words list), or add to the campaign instead.');\n  }\n  const norm = (t) => String(t).toLowerCase().replace(/\\s+/g, ' ').trim();\n  const existing = new Set(toList ? ctx.existing_list_negatives || [] : ctx.existing_campaign_negatives || []);\n  const fresh = v.terms.filter((t) => !existing.has(`${norm(t)}|${v.match_type}`));\n  const skipped = v.terms.length - fresh.length;\n  if (fresh.length === 0) return refuse(409, 'All of these are already negative keywords there.');\n  const keyword = (t) => ({ text: t, matchType: v.match_type });\n  const operations = toList\n    ? fresh.map((t) => ({ create: { sharedSet: `customers/${cid}/sharedSets/${ctx.universal_list_id}`, keyword: keyword(t) } }))\n    : fresh.map((t) => ({ create: { campaign: `customers/${cid}/campaigns/${ctx.campaign_id}`, negative: true, keyword: keyword(t) } }));\n  return [{\n    json: {\n      ok: true,\n      ctx,\n      action: { action_type: 'add_negatives', level: v.level, match_type: v.match_type, terms: fresh, skipped },\n      customer_id: cid,\n      login_customer_id: ctx.login_customer_id || null,\n      api_version: cfg.GOOGLE_ADS_API_VERSION,\n      url_suffix: toList ? 'sharedCriteria:mutate' : 'campaignCriteria:mutate',\n      mutate_body: { operations },\n      campaign_patch: null,\n      source: v.source,\n      source_id: v.source_id,\n    },\n  }];\n}\n\n// ---- Blocked-words list for one account (PDF task 5), any client, one click by Rob\n// One atomic googleAds:mutate: create \"FF - Funeral universal negatives\" if the\n// account has none, add the FF words that are missing plus the client's own name\n// and competitors, and attach the list to every search campaign without it.\n// Campaigns built later get it from ff-build-campaign.\nif (v.source === 'neglist') {\n  if (!ctx.is_test_account && !ctx.writes_enabled) {\n    return refuse(403, 'Writes are not turned on for this client yet. Test on the Google Ads test account first, then Rob can turn writes on in the client settings.');\n  }\n  const n = ctx.neglist || {};\n  const cid = ctx.customer_id;\n  if (!n.last_synced_at) return refuse(409, 'Sync this account first, so the current lists and campaigns are known.');\n\n  const clean = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9 '&.-]+/g, ' ').replace(/\\s+/g, ' ').trim();\n  const usable = (x) => x && x.length <= 80 && x.split(' ').length <= 10;\n  const words = [];\n  const seen = new Set();\n  const add = (text, matchType) => {\n    const t = clean(text);\n    const key = `${t}|${matchType}`;\n    if (usable(t) && !seen.has(key)) {\n      seen.add(key);\n      words.push({ text: t, match_type: matchType });\n    }\n  };\n  for (const u of n.universal || []) add(u.text, u.match_type);\n  // Robin: block the client's own name and competitors' names too (phrase match).\n  const brand = (n.own_brand_terms || []).length ? n.own_brand_terms : [n.client_name];\n  for (const b of brand) add(b, 'PHRASE');\n  for (const c of n.competitor_terms || []) add(c, 'PHRASE');\n\n  const have = new Set(n.list_terms || []);\n  const missing = words.filter((w) => !have.has(`${w.text}|${w.match_type}`));\n  const unlinked = (n.campaigns || []).filter((k) => !k.linked);\n\n  const ops = [];\n  let list = n.list_id ? `customers/${cid}/sharedSets/${n.list_id}` : null;\n  const steps = [];\n  if (!list) {\n    list = `customers/${cid}/sharedSets/-1`;\n    ops.push({ sharedSetOperation: { create: { resourceName: list, name: 'FF - Funeral universal negatives', type: 'NEGATIVE_KEYWORDS' } } });\n    steps.push('Created the list \"FF - Funeral universal negatives\"');\n  }\n  for (const w of missing) {\n    ops.push({ sharedCriterionOperation: { create: { sharedSet: list, keyword: { text: w.text, matchType: w.match_type } } } });\n  }\n  if (missing.length) steps.push(`Added ${missing.length} blocked word(s)`);\n  for (const k of unlinked) {\n    ops.push({ campaignSharedSetOperation: { create: { campaign: `customers/${cid}/campaigns/${k.id}`, sharedSet: list } } });\n  }\n  if (unlinked.length) steps.push(`Attached it to ${unlinked.length} campaign(s): ${unlinked.map((k) => k.name).join(', ').slice(0, 300)}`);\n  if (!ops.length) return refuse(409, 'The blocked-words list is already complete and on every search campaign.');\n\n  return [{\n    json: {\n      ok: true,\n      ctx,\n      action: { action_type: 'setup_negative_list', steps, added: missing.length, campaigns: unlinked.length },\n      customer_id: cid,\n      login_customer_id: ctx.login_customer_id || null,\n      api_version: cfg.GOOGLE_ADS_API_VERSION,\n      url_suffix: 'googleAds:mutate',\n      mutate_body: { mutateOperations: ops },\n      campaign_patch: null,\n      source: v.source,\n      source_id: v.source_id,\n    },\n  }];\n}\n\n// ---- Call tracking setup for one account (PDF task 2), any client, one click by Rob\n// Step A (this plan): account settings + the two 90-second call conversion actions.\n// Step B (\"Plan call asset\", after step A is applied): an account-level call asset\n// with the business number, counted by \"Calls from ads 90s+\". Account level means\n// every campaign shows it, including campaigns built later.\nif (v.source === 'tracking') {\n  if (!ctx.is_test_account && !ctx.writes_enabled) {\n    return refuse(403, 'Writes are not turned on for this client yet. Test on the Google Ads test account first, then Rob can turn writes on in the client settings.');\n  }\n  const t = ctx.tracking || {};\n  const cid = ctx.customer_id;\n  if (!t.last_synced_at) return refuse(409, 'Sync this account first, so the current settings are known.');\n\n  const digits = String(t.client_phone || t.asset_phone || '').replace(/\\D/g, '');\n  const national = digits.length === 11 && digits[0] === '1' ? digits.slice(1) : digits;\n  const phone = national.length === 10 ? `(${national.slice(0, 3)}) ${national.slice(3, 6)}-${national.slice(6)}` : null;\n  // A call asset is needed only when no account-level one exists and some enabled\n  // search campaign has none of its own (campaign-level assets already count).\n  const needAsset = !Number(t.account_call_assets) && Number(t.search_campaigns_without_call_asset ?? 1) > 0;\n  // Business numbers here are US or Canada; the account currency tells them apart.\n  const countryCode = t.currency_code === 'CAD' ? 'CA' : 'US';\n  if (needAsset && !phone) return refuse(422, 'No business phone found - add the funeral home\\'s number (US or Canada, 10 digits) under Edit client > Business phone.');\n\n  const steps = [];\n  const requestsA = [];\n  if (!t.call_reporting_enabled || !t.call_conversion_reporting_enabled || !t.auto_tagging_enabled) {\n    requestsA.push({\n      label: 'account',\n      url_suffix: ':mutate',\n      body: {\n        operation: {\n          update: {\n            resourceName: `customers/${cid}`,\n            autoTaggingEnabled: true,\n            callReportingSetting: { callReportingEnabled: true, callConversionReportingEnabled: true },\n          },\n          updateMask: 'autoTaggingEnabled,callReportingSetting.callReportingEnabled,callReportingSetting.callConversionReportingEnabled',\n        },\n      },\n    });\n    steps.push('Call reporting and auto-tagging turned on');\n  }\n\n  const actions = t.call_actions || [];\n  const value = t.case_value_micros ? Number(t.case_value_micros) / 1e6 : null;\n  const ops = [];\n  const opTypes = [];\n  let adCallAction = null;\n  for (const [type, name] of [['AD_CALL', 'Calls from ads 90s+'], ['WEBSITE_CALL', 'Calls from website 90s+']]) {\n    const good = actions.find((a) => a.type === type && a.status === 'ENABLED' && Number(a.seconds) === 90);\n    if (good) {\n      if (type === 'AD_CALL') adCallAction = `customers/${cid}/conversionActions/${good.id}`;\n      continue;\n    }\n    // The account already counts this kind of call (often at a shorter length):\n    // set those actions to 90 seconds instead of adding a second action, so one\n    // call is never counted twice.\n    const existing = actions.filter((a) => a.type === type && a.status === 'ENABLED');\n    const ours = actions.find((a) => a.type === type && a.name === name);\n    const toFix = existing.length ? existing : ours ? [ours] : [];\n    if (toFix.length) {\n      for (const a of toFix) {\n        ops.push({\n          update: { resourceName: `customers/${cid}/conversionActions/${a.id}`, status: 'ENABLED', phoneCallDurationSeconds: 90 },\n          updateMask: 'status,phoneCallDurationSeconds',\n        });\n        opTypes.push(type);\n        steps.push(`\"${a.name}\" now counts calls of 90 seconds or more (was ${a.seconds ?? 'the default'})`);\n      }\n      if (type === 'AD_CALL') adCallAction = `customers/${cid}/conversionActions/${toFix[0].id}`;\n      continue;\n    }\n    ops.push({\n      create: {\n        name, type, category: 'PHONE_CALL_LEAD', status: 'ENABLED', primaryForGoal: true,\n        countingType: 'ONE_PER_CLICK', phoneCallDurationSeconds: 90,\n        ...(value ? { valueSettings: { defaultValue: value, alwaysUseDefaultValue: true, ...(t.currency_code ? { defaultCurrencyCode: t.currency_code } : {}) } } : {}),\n      },\n    });\n    opTypes.push(type);\n    steps.push(`\"${name}\" created (90 seconds, primary)`);\n  }\n  // The monthly case match uploads signed cases to \"Case signed\" (Robin's name).\n  // Secondary goal: it is reported, but bidding is not switched to it - that is Rob's call.\n  for (const [type, name] of [['UPLOAD_CLICKS', 'Case signed'], ['UPLOAD_CALLS', 'Case signed - calls']]) {\n    const have = actions.find((a) => a.type === type && a.status === 'ENABLED' && /^(case signed|ff - signed case)/i.test(a.name || ''));\n    if (have) continue;\n    ops.push({\n      create: {\n        name, type, category: 'CONVERTED_LEAD', status: 'ENABLED', primaryForGoal: false, countingType: 'ONE_PER_CLICK',\n        ...(value ? { valueSettings: { defaultValue: value, alwaysUseDefaultValue: false, ...(t.currency_code ? { defaultCurrencyCode: t.currency_code } : {}) } } : {}),\n      },\n    });\n    opTypes.push(type);\n    steps.push(`\"${name}\" created for the monthly case match`);\n  }\n  // Website actions by the client's process (tasks 3 and 7). Their AW-.../label\n  // values reach the dashboard's \"Copy website script\" with the next sync.\n  const websiteActions = t.process === 'online_cremation'\n    ? [\n      ['PURCHASE', 'Online arrangement paid', { primaryForGoal: true, countingType: 'MANY_PER_CLICK' }],\n      ['BEGIN_CHECKOUT', 'Arrangement started', { primaryForGoal: false, countingType: 'ONE_PER_CLICK' }],\n    ]\n    : [['SUBMIT_LEAD_FORM', 'Preplanning form', { primaryForGoal: true, countingType: 'ONE_PER_CLICK' }]];\n  for (const [category, name, extra] of websiteActions) {\n    if (actions.some((a) => a.type === 'WEBPAGE' && a.category === category && a.status === 'ENABLED')) continue;\n    ops.push({\n      create: {\n        name, type: 'WEBPAGE', category, status: 'ENABLED', ...extra,\n        ...(category === 'PURCHASE'\n          ? { valueSettings: { ...(value ? { defaultValue: value } : {}), alwaysUseDefaultValue: false, ...(t.currency_code ? { defaultCurrencyCode: t.currency_code } : {}) } }\n          : {}),\n      },\n    });\n    opTypes.push('WEBPAGE');\n    steps.push(`\"${name}\" created for the website`);\n  }\n  if (ops.length) requestsA.push({ label: 'conversion_actions', url_suffix: '/conversionActions:mutate', op_types: opTypes, body: { operations: ops } });\n  if (needAsset) steps.push(`Call asset ${phone} added to the whole account (every campaign shows it)`);\n\n  if (!requestsA.length && !needAsset) return refuse(409, 'Call tracking is already set up for this account.');\n\n  return [{\n    json: {\n      ok: true,\n      ctx,\n      action: { action_type: 'setup_call_tracking', steps },\n      customer_id: cid,\n      login_customer_id: ctx.login_customer_id || null,\n      api_version: cfg.GOOGLE_ADS_API_VERSION,\n      mutate_body: { steps },\n      campaign_patch: null,\n      source: v.source,\n      source_id: v.source_id,\n      tracking: { requests_a: requestsA, ad_call_action: adCallAction, need_asset: needAsset, phone, country_code: countryCode },\n    },\n  }];\n}\n\nif (ctx.action_status !== 'proposed') return refuse(409, `This change is already ${ctx.action_status || 'closed'}.`);\nconst action = normalizeAction(ctx.proposed_action);\nif (!action) return refuse(422, 'The proposed change is not one of the supported actions.');\nif (!ctx.campaign_row_id) return refuse(404, 'The campaign is no longer in the dashboard.');\nif (!ctx.is_test_account && !ctx.writes_enabled) {\n  return refuse(403, 'Writes are not turned on for this client yet. Test on the Google Ads test account first, then Rob can turn writes on in the client settings.');\n}\n\nconst cid = ctx.customer_id;\nlet urlSuffix;\nlet operation;\nlet campaignPatch;\nif (action.action_type === 'update_daily_budget') {\n  if (!ctx.budget_id) return refuse(422, 'This campaign has no budget on file. Run a sync first.');\n  if (ctx.budget_shared) return refuse(422, 'This campaign uses a shared budget. Change it in Google Ads so other campaigns are not affected by surprise.');\n  const micros = Math.round(action.daily_budget * 1e6);\n  urlSuffix = 'campaignBudgets:mutate';\n  operation = {\n    update: { resourceName: `customers/${cid}/campaignBudgets/${ctx.budget_id}`, amountMicros: String(micros) },\n    updateMask: 'amountMicros',\n  };\n  campaignPatch = { budget_micros: micros };\n} else {\n  const target = action.action_type === 'pause_campaign' ? 'PAUSED' : 'ENABLED';\n  if (action.action_type === 'pause_campaign' && ctx.campaign_status !== 'ENABLED') return refuse(409, 'The campaign is not running.');\n  if (action.action_type === 'resume_campaign' && ctx.campaign_status !== 'PAUSED') return refuse(409, 'The campaign is not paused.');\n  urlSuffix = 'campaigns:mutate';\n  operation = {\n    update: { resourceName: `customers/${cid}/campaigns/${ctx.campaign_id}`, status: target },\n    updateMask: 'status',\n  };\n  campaignPatch = { status: target };\n}\n\nreturn [{\n  json: {\n    ok: true,\n    ctx,\n    action,\n    customer_id: cid,\n    login_customer_id: ctx.login_customer_id || null,\n    api_version: cfg.GOOGLE_ADS_API_VERSION,\n    url_suffix: urlSuffix,\n    mutate_body: { operations: [operation] },\n    campaign_patch: campaignPatch,\n    source: v.source,\n    source_id: v.source_id,\n  },\n}];\n"
       }
     },
     {
-      "id": "3b76b69b-7509-4a5d-9f2f-47d7ec5c0d8d",
+      "id": "4031efdf-ff8b-41cf-b44e-9f683f976dbf",
       "name": "Allowed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -315,7 +315,7 @@
           },
           "conditions": [
             {
-              "id": "bf09c519-60b8-4c11-8ad2-5524084e0983",
+              "id": "23059324-7cb1-42e5-84ff-e7e7138a4bb2",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -331,7 +331,7 @@
       }
     },
     {
-      "id": "28230ebf-a313-4118-88fc-778b2abcfc8b",
+      "id": "540923e6-2795-4e2a-ac0e-9e2cc6f370b4",
       "name": "Get Google Ads secrets",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -359,7 +359,7 @@
       "notes": "Developer token, OAuth client id/secret, refresh token and MCC id, entered by Rob on the dashboard Settings page (stored in Supabase private.google_ads_secrets - never readable by the browser)."
     },
     {
-      "id": "5af9b3fd-cfa6-497f-99a5-0d2af1dc483c",
+      "id": "8953f909-cf0a-4a5b-a549-2ef5a8b4deb7",
       "name": "Refresh Google token",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -403,7 +403,7 @@
       "notes": "OAuth refresh, same as the reference. Values from 'Get Google Ads secrets'. Test: Execute step - the output must contain access_token."
     },
     {
-      "id": "4e5fa1b3-a126-4f5d-bd2d-c66e884a343f",
+      "id": "5acc40ff-e949-4467-833e-f4c16999406f",
       "name": "Validate change",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -433,7 +433,7 @@
       "notes": "validateOnly: Google checks the change without making it."
     },
     {
-      "id": "4149d8c6-2fe1-4281-804d-e06e349adbf8",
+      "id": "edaa9acf-fdc0-48a8-b85f-bcc56dced836",
       "name": "Check validation",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -446,7 +446,7 @@
       }
     },
     {
-      "id": "421faef5-2009-46d6-874f-3429983e27fb",
+      "id": "2e9cc1e9-e859-4484-82c5-1f689ecc2573",
       "name": "Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -463,7 +463,7 @@
           },
           "conditions": [
             {
-              "id": "75a8fccd-8e1a-40b5-978e-7da78087a1a7",
+              "id": "ab78daa5-853f-42c4-b253-8097885bdd39",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -479,7 +479,7 @@
       }
     },
     {
-      "id": "5f0093fd-717d-4254-8209-b3cd328d7b5c",
+      "id": "b2325d6f-284e-4c10-a9cc-2630bb0847d9",
       "name": "Apply change",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -509,7 +509,7 @@
       "notes": "The real change. Only reached after the guards and a clean validateOnly call."
     },
     {
-      "id": "007dd712-0aa8-4934-8074-2ef141990599",
+      "id": "8de21914-0ca0-426f-bb8d-cb0a83b55419",
       "name": "Plan records",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -522,7 +522,7 @@
       }
     },
     {
-      "id": "df2c8e44-5c6c-4c81-ba87-a876da8f293d",
+      "id": "161c3405-2121-4be4-b837-8ae622af75b1",
       "name": "Save records",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -566,7 +566,7 @@
       "notes": "write_log, plus the Supabase follow-up for a successful change."
     },
     {
-      "id": "210be52b-ef50-416d-837b-9e7a5916d2d0",
+      "id": "df10d115-15ff-4d48-bdc9-d773470cb57d",
       "name": "Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -580,7 +580,7 @@
       "executeOnce": true
     },
     {
-      "id": "8e791a05-19f5-4d41-8d4c-374522d43d50",
+      "id": "fda8679f-8775-4a9c-8c45-1bc71a836f96",
       "name": "Which change?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -597,7 +597,7 @@
           },
           "conditions": [
             {
-              "id": "cf569d6a-8236-4bff-9901-8747dca39c9c",
+              "id": "33cd7a07-ae9f-4716-bf3a-b6a1a5221166",
               "leftValue": "={{ $('Plan change').first().json.source === 'tracking' }}",
               "rightValue": true,
               "operator": {
@@ -613,7 +613,7 @@
       }
     },
     {
-      "id": "5c32ffe7-f9c3-4748-a59d-98e35acd3d0b",
+      "id": "14aa8f48-7077-4596-88ac-a8ff46a57e54",
       "name": "Tracking: step A?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -630,7 +630,7 @@
           },
           "conditions": [
             {
-              "id": "77a5502f-d617-44da-980e-bbc0f3f8579e",
+              "id": "09645380-6d36-43ac-be45-aba0c1901cc7",
               "leftValue": "={{ $('Plan change').first().json.tracking.requests_a.length > 0 }}",
               "rightValue": true,
               "operator": {
@@ -646,7 +646,7 @@
       }
     },
     {
-      "id": "0ba85574-f160-45f7-87f6-f508294c767f",
+      "id": "ae01604a-3299-41be-bec4-52dd97f6acb5",
       "name": "Tracking: requests",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -660,7 +660,7 @@
       "executeOnce": true
     },
     {
-      "id": "66acd413-b6ec-4a6b-b489-b9da44bfcd66",
+      "id": "1d235de1-48e6-474c-b900-cee855a553df",
       "name": "Validate tracking",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -690,7 +690,7 @@
       "notes": "validateOnly for step A: account settings, then the call conversion actions. One call per item."
     },
     {
-      "id": "184e6ff3-2e55-4666-9988-79627ae008b0",
+      "id": "d2343738-f5f2-4641-b0d4-afce23fa5d38",
       "name": "Check tracking",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -703,7 +703,7 @@
       }
     },
     {
-      "id": "bf84d0c2-cb09-486d-8b6c-0fa9eafae9d5",
+      "id": "66d8330d-3ba5-4643-9b03-3b01aac90baa",
       "name": "Tracking valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -720,7 +720,7 @@
           },
           "conditions": [
             {
-              "id": "6d1805e7-0269-41b7-a362-a3aafd7793ae",
+              "id": "7ec7c0fc-d619-4374-a219-026552798ecb",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -736,7 +736,7 @@
       }
     },
     {
-      "id": "b64aefcf-45d6-43b0-9fb8-9da157a44229",
+      "id": "d3616b5d-c07a-4ff0-b120-005e29fdcb1d",
       "name": "Tracking: real requests",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -750,7 +750,7 @@
       "executeOnce": true
     },
     {
-      "id": "064561ce-5694-4a29-a4ea-8675e9ab6e6e",
+      "id": "5c71ed34-cb44-4849-b884-e1376f7f5ac1",
       "name": "Apply tracking",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -780,7 +780,7 @@
       "notes": "Step A for real, after a clean validateOnly."
     },
     {
-      "id": "e80ef690-63b6-4d13-82d9-a123598f2e04",
+      "id": "2be98c16-56eb-4008-bc56-8b67918f8cd2",
       "name": "Plan call asset",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -794,7 +794,7 @@
       "executeOnce": true
     },
     {
-      "id": "06070331-afd2-4455-9ec8-56d26c86e598",
+      "id": "42f6344b-91e3-4fe2-aeca-d57067d8ba87",
       "name": "Call asset needed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -811,7 +811,7 @@
           },
           "conditions": [
             {
-              "id": "b715a646-b410-43ab-9b5d-f1a99f4b68e2",
+              "id": "d65815f5-8862-43ca-8f06-7300e0c01aae",
               "leftValue": "={{ $json.need === true }}",
               "rightValue": true,
               "operator": {
@@ -827,7 +827,7 @@
       }
     },
     {
-      "id": "22a648a9-186d-4461-9aff-bf3b08c7322b",
+      "id": "91e906a4-9490-4f84-9784-5cbeb4ce0c74",
       "name": "Validate call asset",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -857,7 +857,7 @@
       "notes": "validateOnly for step B: the account-level call asset."
     },
     {
-      "id": "72dc0edb-ed10-490f-bd8a-e0b9c3a986db",
+      "id": "12e01d4c-104d-417a-b1b4-44718f8ea7a5",
       "name": "Check call asset",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -870,7 +870,7 @@
       }
     },
     {
-      "id": "cdce16c4-9d3c-481d-8688-fc727a9780fb",
+      "id": "c4d1008c-7add-43c5-b4ba-78a0945378fd",
       "name": "Call asset valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -887,7 +887,7 @@
           },
           "conditions": [
             {
-              "id": "d9b34422-0ab5-46b6-9c28-82ba2444cc5c",
+              "id": "df37a238-f3f9-46fa-b092-a6dc96789c60",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -903,7 +903,7 @@
       }
     },
     {
-      "id": "9253a0f9-0793-4282-b6a3-ab4d8b5e587e",
+      "id": "cd9ffb44-0678-4488-afa0-73154dfee6db",
       "name": "Apply call asset",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,

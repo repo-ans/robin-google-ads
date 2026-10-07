@@ -2,7 +2,7 @@
   "name": "ff-client-admin",
   "nodes": [
     {
-      "id": "1bc5cc95-de5d-4edc-83fd-a223955db210",
+      "id": "24893cbe-c221-44e8-8b09-6de9f250d052",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -22,7 +22,7 @@
       "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
     },
     {
-      "id": "6b69f5a6-a114-47f7-8d48-3ba6294a2a7b",
+      "id": "d7eac064-9cfc-45de-99de-cc26f6a77d29",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -36,7 +36,7 @@
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
     },
     {
-      "id": "dfb1a976-4848-4b2e-ad77-e2f291f7364d",
+      "id": "e511bba6-0c89-4a4d-814e-35820d2b587b",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -50,7 +50,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "fe5710fa-af11-4a30-a147-a104eb5095e6",
+      "id": "a5f8e215-e28b-438b-98e9-ce0470877e2f",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -86,7 +86,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "938e84d7-da93-44b8-9223-c735185985cd",
+      "id": "43b2bb75-e897-41f6-95d6-ce9ef670a7ab",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -131,7 +131,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "a4735882-665d-4e1b-81e8-a6d4968a5863",
+      "id": "3d6115aa-e578-4541-bd1f-6f61421f3343",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -145,7 +145,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "9286ec42-80d0-47ee-bb63-941df5011e2b",
+      "id": "5fae6cba-3282-4c57-b272-f1fc3309cfca",
       "parameters": {
         "conditions": {
           "options": {
@@ -178,7 +178,7 @@
       ]
     },
     {
-      "id": "cd30d3b3-159d-4ee1-9ae7-fe0661afe66d",
+      "id": "548167ae-3f0b-45b3-aa60-0fe62b70960f",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -196,7 +196,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "66863be9-b030-4e95-aa9b-5aa80df29d6e",
+      "id": "7d52165b-72c4-435c-96c4-69fb8f4564e5",
       "name": "Load target login",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -220,7 +220,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "99b856d9-41dd-419d-97fc-350717cf8f16",
+      "id": "974b9815-5021-4129-b36f-98dcb219a794",
       "name": "Plan",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -229,11 +229,11 @@
         200
       ],
       "parameters": {
-        "jsCode": "// ---- shared/input.js (included by scripts/build-n8n.mjs) -------------------\n// Webhook input helpers. The caller always comes from the Auth check block,\n// never from the request body.\nconst UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst CUSTOMER_RE = /^[0-9]{10}$/;\nconst ZERO_UUID = '00000000-0000-0000-0000-000000000000';\n\nconst requestBody = () => {\n  const b = $('Config').first().json.body;\n  return b && typeof b === 'object' ? b : {};\n};\nconst caller = () => $('Auth: check role').first().json.user;\nconst isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);\nconst customerId = (v) => {\n  const d = String(v === undefined || v === null ? '' : v).replace(/-/g, '');\n  return CUSTOMER_RE.test(d) ? d : null;\n};\nconst text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');\n\n// Every \"result\" item carries { status, body } for the generic Respond node.\nconst reject = (status, error) => [{ json: { valid: false, status, body: { error } } }];\nconst reply = (status, body) => [{ json: { status, body } }];\n// ---- end shared/input.js ----------------------------------------------------\n\n// Everything FF staff do to clients, accounts and logins. Body { action, ... }:\n//   create_client      { name, contact_name?, contact_email?, google_ads_customer_id?, slug?, website_url?, phone?, towns?, process?, currency_code?, case_value?,\n//                        competitor_terms?, own_brand_terms?, slack_channel?, ghl_location_id?, google_sheet_id?,\n//                        dataforseo_location_code?, language_code?, office_hours? }\n//   update_client      { client_id, ...same fields }\n//   archive_client / unarchive_client { client_id }\n//   set_writes_enabled { client_id, enabled }                      rob_admin only\n//   assign_account     { customer_id, client_id | null }            null = back to Unassigned\n//   add_account        { customer_id, login_customer_id?, client_id? }   direct-access accounts\n//   set_account_sync   { customer_id, sync_enabled }\n//   create_login       { client_id, email, password }              a client_viewer login\n//   create_staff_login { email, password, role: ff_staff | rob_admin }   rob_admin only\n//   reset_password     { user_id, password }\n//   disable_login / enable_login { user_id }\n// FF staff manage client logins; only rob_admin manages FF staff logins.\n// Input: the profiles row of body.user_id (empty when not given).\nconst b = requestBody();\nconst user = caller();\nconst target = $input.first().json || {};\nconst isRob = user.role === 'rob_admin';\n\nconst EMAIL_RE = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/;\nconst passwordOk = (p) => typeof p === 'string' && p.length >= 10 && p.length <= 72 && /[A-Za-z]/.test(p) && /[0-9]/.test(p);\nconst list = (v, max = 50) => (Array.isArray(v) ? v.map((x) => text(String(x), 100)).filter(Boolean).slice(0, max) : []);\nconst slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);\nconst DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];\n\n// Only these client fields can be set, each checked.\nfunction clientFields(src) {\n  const f = {};\n  const errors = [];\n  if ('name' in src) { f.name = text(src.name, 120); if (f.name.length < 2) errors.push('Name is required.'); }\n  if ('website_url' in src) {\n    const u = text(src.website_url, 300);\n    if (u && !/^https?:\\/\\/\\S+\\.\\S+$/.test(u)) errors.push('Website must start with https://');\n    f.website_url = u || null;\n  }\n  if ('phone' in src) f.phone = text(src.phone, 40) || null;\n  if ('contact_name' in src) f.contact_name = text(src.contact_name, 120) || null;\n  if ('contact_email' in src) {\n    const e = text(src.contact_email, 200).toLowerCase();\n    if (e && !EMAIL_RE.test(e)) errors.push('Enter a valid contact email.');\n    f.contact_email = e || null;\n  }\n  if ('towns' in src) f.towns = list(src.towns);\n  if ('service_area_notes' in src) f.service_area_notes = text(src.service_area_notes, 1000) || null;\n  if ('process' in src) {\n    if (!['funeral_home', 'online_cremation'].includes(src.process)) errors.push('Process must be funeral_home or online_cremation.');\n    else f.process = src.process;\n  }\n  if ('currency_code' in src) {\n    const c = String(src.currency_code || '').toUpperCase();\n    if (c && !/^[A-Z]{3}$/.test(c)) errors.push('Currency must be a 3-letter code like USD.');\n    f.currency_code = c || null;\n  }\n  if ('case_value' in src) {\n    const n = Number(src.case_value);\n    if (src.case_value !== null && src.case_value !== '' && !(n >= 0)) errors.push('Case value must be a number.');\n    f.case_value_micros = src.case_value === null || src.case_value === '' ? null : Math.round(n * 1e6);\n  }\n  if ('ghl_location_id' in src) {\n    const g = text(src.ghl_location_id, 100);\n    if (g && !/^[A-Za-z0-9_-]+$/.test(g)) errors.push('GHL location ID has letters and numbers only (Settings > Business Profile in GHL).');\n    f.ghl_location_id = g || null;\n  }\n  if ('google_sheet_id' in src) {\n    // The whole Sheet link or just its id (the part after /d/).\n    const raw = text(src.google_sheet_id, 300);\n    const m = raw.match(/\\/d\\/([A-Za-z0-9_-]{20,100})/);\n    const id = m ? m[1] : raw;\n    if (id && !/^[A-Za-z0-9_-]{20,100}$/.test(id)) errors.push('Google Sheet: paste the Sheet link or its id.');\n    f.google_sheet_id = id || null;\n  }\n  if ('competitor_terms' in src) f.competitor_terms = list(src.competitor_terms);\n  if ('own_brand_terms' in src) f.own_brand_terms = list(src.own_brand_terms);\n  if ('slack_channel' in src) f.slack_channel = text(src.slack_channel, 80) || null;\n  if ('dataforseo_location_code' in src) {\n    const n = Number(src.dataforseo_location_code);\n    if (!Number.isInteger(n) || n <= 0) errors.push('DataForSEO location code must be a number, e.g. 2840 for the US.');\n    else f.dataforseo_location_code = n;\n  }\n  if ('language_code' in src) {\n    if (!['en', 'fr', 'es'].includes(src.language_code)) errors.push('Language must be en, fr or es.');\n    else f.language_code = src.language_code;\n  }\n  if ('office_hours' in src) {\n    const o = src.office_hours || {};\n    const days = (Array.isArray(o.days) ? o.days : []).filter((d) => DAYS.includes(d));\n    const sh = Number(o.start_hour);\n    const eh = Number(o.end_hour);\n    if (!days.length || !(sh >= 0 && sh < 24) || !(eh > sh && eh <= 24)) errors.push('Office hours need days and a start hour before the end hour.');\n    else f.office_hours = { days, start_hour: sh, end_hour: eh };\n  }\n  return { f, errors };\n}\n\nconst req = (method, path, body, prefer = 'return=representation') => ({ method, path, body, prefer });\n// Link a Google Ads account to the client (runs after the client row exists -\n// \"Run requests\" sends one request at a time, in order). Only customer_id and\n// client_id are sent, so a sync's login_customer_id is kept.\nconst linkAccount = (cid, clientId) => req('POST', 'rest/v1/ad_accounts?on_conflict=customer_id',\n  [{ customer_id: cid, client_id: clientId }], 'resolution=merge-duplicates,return=minimal');\n// Random v4 UUID so the account link can refer to the new client in the same run.\nconst uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {\n  const r = Math.floor(Math.random() * 16);\n  return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);\n});\nconst adsId = () => {\n  const raw = b.google_ads_customer_id;\n  if (raw === undefined || raw === null || String(raw).trim() === '') return { cid: null };\n  const cid = customerId(raw);\n  return cid ? { cid } : { error: 'Google Ads Account ID must be 10 digits, like 123-456-7890.' };\n};\nconst run = (requests, message) => requests.map((r) => ({ json: { valid: true, kind: 'requests', message, ...r } }));\n\nfunction targetCheck(action) {\n  if (!isUuid(b.user_id)) return 'user_id is missing or not valid.';\n  if (!target.user_id) return 'Login not found.';\n  if (target.role !== 'client_viewer' && !isRob) return 'Only Rob can change FF staff logins.';\n  if (action === 'disable_login' && target.user_id === user.user_id) return 'You cannot turn off your own login.';\n  return null;\n}\n\nswitch (b.action) {\n  case 'create_client': {\n    const { f, errors } = clientFields(b);\n    if (!f.name) errors.push('Name is required.');\n    const slug = slugify(b.slug || b.name || '');\n    if (slug.length < 2) errors.push('Slug is required.');\n    const ads = adsId();\n    if (ads.error) errors.push(ads.error);\n    if (errors.length) return reject(400, errors.join(' '));\n    const id = uuid();\n    const requests = [req('POST', 'rest/v1/clients', { ...f, id, slug })];\n    if (ads.cid) requests.push(linkAccount(ads.cid, id));\n    return run(requests, ads.cid ? 'Client created and Google Ads account linked.' : 'Client created.');\n  }\n  case 'update_client': {\n    if (!isUuid(b.client_id)) return reject(400, 'client_id is missing or not valid.');\n    const { f, errors } = clientFields(b);\n    const ads = adsId();\n    if (ads.error) errors.push(ads.error);\n    if (errors.length) return reject(400, errors.join(' '));\n    if (!Object.keys(f).length && !ads.cid) return reject(400, 'Nothing to change.');\n    const requests = [];\n    if (Object.keys(f).length) requests.push(req('PATCH', `rest/v1/clients?id=eq.${b.client_id}`, f));\n    if (ads.cid) requests.push(linkAccount(ads.cid, b.client_id));\n    return run(requests, 'Client updated.');\n  }\n  case 'archive_client':\n  case 'unarchive_client': {\n    if (!isUuid(b.client_id)) return reject(400, 'client_id is missing or not valid.');\n    const archived = b.action === 'archive_client' ? new Date().toISOString() : null;\n    return run([req('PATCH', `rest/v1/clients?id=eq.${b.client_id}`, { archived_at: archived })],\n      archived ? 'Client archived.' : 'Client restored.');\n  }\n  case 'set_writes_enabled': {\n    if (!isRob) return reject(403, 'Only Rob can turn Google Ads writes on or off.');\n    if (!isUuid(b.client_id)) return reject(400, 'client_id is missing or not valid.');\n    return run([req('PATCH', `rest/v1/clients?id=eq.${b.client_id}`, { writes_enabled: b.enabled === true })],\n      b.enabled === true ? 'Writes turned on for this client.' : 'Writes turned off for this client.');\n  }\n  case 'assign_account': {\n    const cid = customerId(b.customer_id);\n    if (!cid) return reject(400, 'customer_id must be 10 digits.');\n    if (b.client_id !== null && !isUuid(b.client_id)) return reject(400, 'client_id is not valid.');\n    return run([req('PATCH', `rest/v1/ad_accounts?customer_id=eq.${cid}`, { client_id: b.client_id })],\n      b.client_id ? 'Account assigned.' : 'Account moved to Unassigned.');\n  }\n  case 'add_account': {\n    const cid = customerId(b.customer_id);\n    if (!cid) return reject(400, 'customer_id must be 10 digits.');\n    const login = b.login_customer_id ? customerId(b.login_customer_id) : null;\n    if (b.login_customer_id && !login) return reject(400, 'login_customer_id must be 10 digits, or empty for direct access.');\n    if (b.client_id && !isUuid(b.client_id)) return reject(400, 'client_id is not valid.');\n    return run([req('POST', 'rest/v1/ad_accounts?on_conflict=customer_id',\n      [{ customer_id: cid, login_customer_id: login, client_id: b.client_id || null }],\n      'resolution=merge-duplicates,return=representation')], 'Account added. It will sync on the next run.');\n  }\n  case 'set_account_sync': {\n    const cid = customerId(b.customer_id);\n    if (!cid) return reject(400, 'customer_id must be 10 digits.');\n    return run([req('PATCH', `rest/v1/ad_accounts?customer_id=eq.${cid}`, { sync_enabled: b.sync_enabled === true })],\n      b.sync_enabled === true ? 'Sync turned on.' : 'Sync turned off.');\n  }\n  case 'create_login':\n  case 'create_staff_login': {\n    const email = text(b.email, 200).toLowerCase();\n    if (!EMAIL_RE.test(email)) return reject(400, 'Enter a valid email address.');\n    if (!passwordOk(b.password)) return reject(400, 'Password: at least 10 characters, with letters and numbers.');\n    let role = 'client_viewer';\n    let clientId = null;\n    if (b.action === 'create_staff_login') {\n      if (!isRob) return reject(403, 'Only Rob can create FF staff logins.');\n      if (!['ff_staff', 'rob_admin'].includes(b.role)) return reject(400, 'Role must be ff_staff or rob_admin.');\n      role = b.role;\n    } else {\n      if (!isUuid(b.client_id)) return reject(400, 'client_id is missing or not valid.');\n      clientId = b.client_id;\n    }\n    return [{ json: { valid: true, kind: 'create_login', email, password: b.password, role, client_id: clientId } }];\n  }\n  case 'reset_password': {\n    const problem = targetCheck(b.action);\n    if (problem) return reject(problem === 'Login not found.' ? 404 : 403, problem);\n    if (!passwordOk(b.password)) return reject(400, 'Password: at least 10 characters, with letters and numbers.');\n    return run([req('PUT', `auth/v1/admin/users/${target.user_id}`, { password: b.password })], 'Password changed.');\n  }\n  case 'disable_login':\n  case 'enable_login': {\n    const problem = targetCheck(b.action);\n    if (problem) return reject(problem === 'Login not found.' ? 404 : 403, problem);\n    const off = b.action === 'disable_login';\n    return run([\n      req('PUT', `auth/v1/admin/users/${target.user_id}`, { ban_duration: off ? '876000h' : 'none' }),\n      req('PATCH', `rest/v1/profiles?user_id=eq.${target.user_id}`, { disabled: off }),\n    ], off ? 'Login turned off.' : 'Login turned on.');\n  }\n  default:\n    return reject(400, 'Unknown action.');\n}\n"
+        "jsCode": "// ---- shared/input.js (included by scripts/build-n8n.mjs) -------------------\n// Webhook input helpers. The caller always comes from the Auth check block,\n// never from the request body.\nconst UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst CUSTOMER_RE = /^[0-9]{10}$/;\nconst ZERO_UUID = '00000000-0000-0000-0000-000000000000';\n\nconst requestBody = () => {\n  const b = $('Config').first().json.body;\n  return b && typeof b === 'object' ? b : {};\n};\nconst caller = () => $('Auth: check role').first().json.user;\nconst isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);\nconst customerId = (v) => {\n  const d = String(v === undefined || v === null ? '' : v).replace(/-/g, '');\n  return CUSTOMER_RE.test(d) ? d : null;\n};\nconst text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');\n\n// Every \"result\" item carries { status, body } for the generic Respond node.\nconst reject = (status, error) => [{ json: { valid: false, status, body: { error } } }];\nconst reply = (status, body) => [{ json: { status, body } }];\n// ---- end shared/input.js ----------------------------------------------------\n\n// Everything FF staff do to clients, accounts and logins. Body { action, ... }:\n//   create_client      { name, contact_name?, contact_email?, google_ads_customer_id?, slug?, website_url?, phone?, towns?, process?, currency_code?, case_value?,\n//                        competitor_terms?, own_brand_terms?, slack_channel?, ghl_location_id?, google_sheet_id?,\n//                        dataforseo_location_code?, language_code?, office_hours? }\n//   update_client      { client_id, ...same fields }\n//   archive_client / unarchive_client { client_id }\n//   set_writes_enabled { client_id, enabled }                      rob_admin only\n//   assign_account     { customer_id, client_id | null }            null = back to Unassigned\n//   add_account        { customer_id, login_customer_id?, client_id? }   direct-access accounts\n//   set_account_sync   { customer_id, sync_enabled }\n//   create_login       { client_id, email, password }              a client_viewer login\n//   create_staff_login { email, password, role: ff_staff | rob_admin }   rob_admin only\n//   reset_password     { user_id, password }\n//   disable_login / enable_login { user_id }\n// FF staff manage client logins; only rob_admin manages FF staff logins.\n// Input: the profiles row of body.user_id (empty when not given).\nconst b = requestBody();\nconst user = caller();\nconst target = $input.first().json || {};\nconst isRob = user.role === 'rob_admin';\n\nconst EMAIL_RE = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/;\nconst passwordOk = (p) => typeof p === 'string' && p.length >= 10 && p.length <= 72 && /[A-Za-z]/.test(p) && /[0-9]/.test(p);\nconst list = (v, max = 50) => (Array.isArray(v) ? v.map((x) => text(String(x), 100)).filter(Boolean).slice(0, max) : []);\nconst slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);\nconst DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];\n\n// Only these client fields can be set, each checked.\nfunction clientFields(src) {\n  const f = {};\n  const errors = [];\n  if ('name' in src) { f.name = text(src.name, 120); if (f.name.length < 2) errors.push('Name is required.'); }\n  if ('website_url' in src) {\n    const u = text(src.website_url, 300);\n    if (u && !/^https?:\\/\\/\\S+\\.\\S+$/.test(u)) errors.push('Website must start with https://');\n    f.website_url = u || null;\n  }\n  if ('phone' in src) f.phone = text(src.phone, 40) || null;\n  if ('contact_name' in src) f.contact_name = text(src.contact_name, 120) || null;\n  if ('contact_email' in src) {\n    const e = text(src.contact_email, 200).toLowerCase();\n    if (e && !EMAIL_RE.test(e)) errors.push('Enter a valid contact email.');\n    f.contact_email = e || null;\n  }\n  if ('towns' in src) f.towns = list(src.towns);\n  if ('service_area_notes' in src) f.service_area_notes = text(src.service_area_notes, 1000) || null;\n  if ('process' in src) {\n    if (!['funeral_home', 'online_cremation'].includes(src.process)) errors.push('Process must be funeral_home or online_cremation.');\n    else {\n      f.process = src.process;\n      f.process_source = 'manual'; // set by FF - the daily website check no longer changes it\n    }\n  }\n  if ('currency_code' in src) {\n    const c = String(src.currency_code || '').toUpperCase();\n    if (c && !/^[A-Z]{3}$/.test(c)) errors.push('Currency must be a 3-letter code like USD.');\n    f.currency_code = c || null;\n  }\n  if ('case_value' in src) {\n    const n = Number(src.case_value);\n    if (src.case_value !== null && src.case_value !== '' && !(n >= 0)) errors.push('Case value must be a number.');\n    f.case_value_micros = src.case_value === null || src.case_value === '' ? null : Math.round(n * 1e6);\n  }\n  if ('ghl_location_id' in src) {\n    const g = text(src.ghl_location_id, 100);\n    if (g && !/^[A-Za-z0-9_-]+$/.test(g)) errors.push('GHL location ID has letters and numbers only (Settings > Business Profile in GHL).');\n    f.ghl_location_id = g || null;\n  }\n  if ('google_sheet_id' in src) {\n    // The whole Sheet link or just its id (the part after /d/).\n    const raw = text(src.google_sheet_id, 300);\n    const m = raw.match(/\\/d\\/([A-Za-z0-9_-]{20,100})/);\n    const id = m ? m[1] : raw;\n    if (id && !/^[A-Za-z0-9_-]{20,100}$/.test(id)) errors.push('Google Sheet: paste the Sheet link or its id.');\n    f.google_sheet_id = id || null;\n  }\n  if ('competitor_terms' in src) f.competitor_terms = list(src.competitor_terms);\n  if ('own_brand_terms' in src) f.own_brand_terms = list(src.own_brand_terms);\n  if ('slack_channel' in src) f.slack_channel = text(src.slack_channel, 80) || null;\n  if ('dataforseo_location_code' in src) {\n    const n = Number(src.dataforseo_location_code);\n    if (!Number.isInteger(n) || n <= 0) errors.push('DataForSEO location code must be a number, e.g. 2840 for the US.');\n    else f.dataforseo_location_code = n;\n  }\n  if ('language_code' in src) {\n    if (!['en', 'fr', 'es'].includes(src.language_code)) errors.push('Language must be en, fr or es.');\n    else f.language_code = src.language_code;\n  }\n  if ('office_hours' in src) {\n    const o = src.office_hours || {};\n    const days = (Array.isArray(o.days) ? o.days : []).filter((d) => DAYS.includes(d));\n    const sh = Number(o.start_hour);\n    const eh = Number(o.end_hour);\n    if (!days.length || !(sh >= 0 && sh < 24) || !(eh > sh && eh <= 24)) errors.push('Office hours need days and a start hour before the end hour.');\n    else f.office_hours = { days, start_hour: sh, end_hour: eh };\n  }\n  return { f, errors };\n}\n\nconst req = (method, path, body, prefer = 'return=representation') => ({ method, path, body, prefer });\n// Link a Google Ads account to the client (runs after the client row exists -\n// \"Run requests\" sends one request at a time, in order). Only customer_id and\n// client_id are sent, so a sync's login_customer_id is kept.\nconst linkAccount = (cid, clientId) => req('POST', 'rest/v1/ad_accounts?on_conflict=customer_id',\n  [{ customer_id: cid, client_id: clientId }], 'resolution=merge-duplicates,return=minimal');\n// Random v4 UUID so the account link can refer to the new client in the same run.\nconst uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {\n  const r = Math.floor(Math.random() * 16);\n  return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);\n});\nconst adsId = () => {\n  const raw = b.google_ads_customer_id;\n  if (raw === undefined || raw === null || String(raw).trim() === '') return { cid: null };\n  const cid = customerId(raw);\n  return cid ? { cid } : { error: 'Google Ads Account ID must be 10 digits, like 123-456-7890.' };\n};\nconst run = (requests, message) => requests.map((r) => ({ json: { valid: true, kind: 'requests', message, ...r } }));\n\nfunction targetCheck(action) {\n  if (!isUuid(b.user_id)) return 'user_id is missing or not valid.';\n  if (!target.user_id) return 'Login not found.';\n  if (target.role !== 'client_viewer' && !isRob) return 'Only Rob can change FF staff logins.';\n  if (action === 'disable_login' && target.user_id === user.user_id) return 'You cannot turn off your own login.';\n  return null;\n}\n\nswitch (b.action) {\n  case 'create_client': {\n    const { f, errors } = clientFields(b);\n    if (!f.name) errors.push('Name is required.');\n    const slug = slugify(b.slug || b.name || '');\n    if (slug.length < 2) errors.push('Slug is required.');\n    const ads = adsId();\n    if (ads.error) errors.push(ads.error);\n    if (errors.length) return reject(400, errors.join(' '));\n    const id = uuid();\n    const requests = [req('POST', 'rest/v1/clients', { ...f, id, slug })];\n    if (ads.cid) requests.push(linkAccount(ads.cid, id));\n    return run(requests, ads.cid ? 'Client created and Google Ads account linked.' : 'Client created.');\n  }\n  case 'update_client': {\n    if (!isUuid(b.client_id)) return reject(400, 'client_id is missing or not valid.');\n    const { f, errors } = clientFields(b);\n    const ads = adsId();\n    if (ads.error) errors.push(ads.error);\n    if (errors.length) return reject(400, errors.join(' '));\n    if (!Object.keys(f).length && !ads.cid) return reject(400, 'Nothing to change.');\n    const requests = [];\n    if (Object.keys(f).length) requests.push(req('PATCH', `rest/v1/clients?id=eq.${b.client_id}`, f));\n    if (ads.cid) requests.push(linkAccount(ads.cid, b.client_id));\n    return run(requests, 'Client updated.');\n  }\n  case 'archive_client':\n  case 'unarchive_client': {\n    if (!isUuid(b.client_id)) return reject(400, 'client_id is missing or not valid.');\n    const archived = b.action === 'archive_client' ? new Date().toISOString() : null;\n    return run([req('PATCH', `rest/v1/clients?id=eq.${b.client_id}`, { archived_at: archived })],\n      archived ? 'Client archived.' : 'Client restored.');\n  }\n  case 'set_writes_enabled': {\n    if (!isRob) return reject(403, 'Only Rob can turn Google Ads writes on or off.');\n    if (!isUuid(b.client_id)) return reject(400, 'client_id is missing or not valid.');\n    return run([req('PATCH', `rest/v1/clients?id=eq.${b.client_id}`, { writes_enabled: b.enabled === true })],\n      b.enabled === true ? 'Writes turned on for this client.' : 'Writes turned off for this client.');\n  }\n  case 'assign_account': {\n    const cid = customerId(b.customer_id);\n    if (!cid) return reject(400, 'customer_id must be 10 digits.');\n    if (b.client_id !== null && !isUuid(b.client_id)) return reject(400, 'client_id is not valid.');\n    return run([req('PATCH', `rest/v1/ad_accounts?customer_id=eq.${cid}`, { client_id: b.client_id })],\n      b.client_id ? 'Account assigned.' : 'Account moved to Unassigned.');\n  }\n  case 'add_account': {\n    const cid = customerId(b.customer_id);\n    if (!cid) return reject(400, 'customer_id must be 10 digits.');\n    const login = b.login_customer_id ? customerId(b.login_customer_id) : null;\n    if (b.login_customer_id && !login) return reject(400, 'login_customer_id must be 10 digits, or empty for direct access.');\n    if (b.client_id && !isUuid(b.client_id)) return reject(400, 'client_id is not valid.');\n    return run([req('POST', 'rest/v1/ad_accounts?on_conflict=customer_id',\n      [{ customer_id: cid, login_customer_id: login, client_id: b.client_id || null }],\n      'resolution=merge-duplicates,return=representation')], 'Account added. It will sync on the next run.');\n  }\n  case 'set_account_sync': {\n    const cid = customerId(b.customer_id);\n    if (!cid) return reject(400, 'customer_id must be 10 digits.');\n    return run([req('PATCH', `rest/v1/ad_accounts?customer_id=eq.${cid}`, { sync_enabled: b.sync_enabled === true })],\n      b.sync_enabled === true ? 'Sync turned on.' : 'Sync turned off.');\n  }\n  case 'create_login':\n  case 'create_staff_login': {\n    const email = text(b.email, 200).toLowerCase();\n    if (!EMAIL_RE.test(email)) return reject(400, 'Enter a valid email address.');\n    if (!passwordOk(b.password)) return reject(400, 'Password: at least 10 characters, with letters and numbers.');\n    let role = 'client_viewer';\n    let clientId = null;\n    if (b.action === 'create_staff_login') {\n      if (!isRob) return reject(403, 'Only Rob can create FF staff logins.');\n      if (!['ff_staff', 'rob_admin'].includes(b.role)) return reject(400, 'Role must be ff_staff or rob_admin.');\n      role = b.role;\n    } else {\n      if (!isUuid(b.client_id)) return reject(400, 'client_id is missing or not valid.');\n      clientId = b.client_id;\n    }\n    return [{ json: { valid: true, kind: 'create_login', email, password: b.password, role, client_id: clientId } }];\n  }\n  case 'reset_password': {\n    const problem = targetCheck(b.action);\n    if (problem) return reject(problem === 'Login not found.' ? 404 : 403, problem);\n    if (!passwordOk(b.password)) return reject(400, 'Password: at least 10 characters, with letters and numbers.');\n    return run([req('PUT', `auth/v1/admin/users/${target.user_id}`, { password: b.password })], 'Password changed.');\n  }\n  case 'disable_login':\n  case 'enable_login': {\n    const problem = targetCheck(b.action);\n    if (problem) return reject(problem === 'Login not found.' ? 404 : 403, problem);\n    const off = b.action === 'disable_login';\n    return run([\n      req('PUT', `auth/v1/admin/users/${target.user_id}`, { ban_duration: off ? '876000h' : 'none' }),\n      req('PATCH', `rest/v1/profiles?user_id=eq.${target.user_id}`, { disabled: off }),\n    ], off ? 'Login turned off.' : 'Login turned on.');\n  }\n  default:\n    return reject(400, 'Unknown action.');\n}\n"
       }
     },
     {
-      "id": "5298e967-cfa2-40ab-adb1-3270aec970f7",
+      "id": "49fe24fe-b9ca-4e29-931f-a2d0fb812e49",
       "name": "Plan ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -250,7 +250,7 @@
           },
           "conditions": [
             {
-              "id": "c1a22f03-82f4-4753-8a00-9f74fdbdc3ee",
+              "id": "0078fa9c-b9c2-4a4a-8d6d-2f0592c7dad0",
               "leftValue": "={{ $json.valid === true }}",
               "rightValue": true,
               "operator": {
@@ -266,7 +266,7 @@
       }
     },
     {
-      "id": "e19306c8-95ab-4ff8-ae16-31026ad5fae8",
+      "id": "eeb59384-d42c-4e9c-b205-3fbeff0d7fcf",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -283,7 +283,7 @@
       }
     },
     {
-      "id": "3967bfd6-5d5b-4bdb-9075-ef2702f60571",
+      "id": "75ff3790-b9d3-4fc7-87d0-1dbf3027f03f",
       "name": "Create login?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -300,7 +300,7 @@
           },
           "conditions": [
             {
-              "id": "8ea1de47-2e8b-4e3a-8d51-b351c0990121",
+              "id": "c0d08cce-34b1-442b-bb5e-0b75e0dddde9",
               "leftValue": "={{ $json.kind === 'create_login' }}",
               "rightValue": true,
               "operator": {
@@ -316,7 +316,7 @@
       }
     },
     {
-      "id": "4aa9b25d-f0e8-4522-9ccb-43a385e546da",
+      "id": "e642299c-b0fc-4164-be96-13cb385f4886",
       "name": "Run requests",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -366,7 +366,7 @@
       "notes": "Auth Admin API (auth/v1/admin/users) and PostgREST, both with the service role credential. One request at a time, in order (a new client row before its Google Ads account link)."
     },
     {
-      "id": "f5a89d2c-3b0b-4315-958f-0f362e875527",
+      "id": "7d87f5f5-8e89-4d8a-be73-11f78270dc42",
       "name": "Summarize",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -379,7 +379,7 @@
       }
     },
     {
-      "id": "9fffad5d-344e-42bd-9c09-9f7178b578fe",
+      "id": "9ef9cf58-af6e-4604-8f7d-1ad8cdade79c",
       "name": "Create auth user",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -413,7 +413,7 @@
       "notes": "Supabase Auth Admin API. The password is not stored anywhere else and is never returned."
     },
     {
-      "id": "c690b10d-2f9c-4d59-a643-19f9fb024333",
+      "id": "88bdd6a9-a43b-45ec-809a-f1ab6e063bc8",
       "name": "Check user",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -426,7 +426,7 @@
       }
     },
     {
-      "id": "aae46d9d-0fe3-429a-a231-e5ae43d39f03",
+      "id": "da6445e9-9694-4e1c-a14c-40ef40490929",
       "name": "User created?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -443,7 +443,7 @@
           },
           "conditions": [
             {
-              "id": "bd5dcabf-072a-4567-b0b2-9cf7b2aee87f",
+              "id": "0aba9af4-43ee-4222-ad8b-214e859cea3a",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -459,7 +459,7 @@
       }
     },
     {
-      "id": "98767303-a8b0-4e79-8601-590605d9051e",
+      "id": "10e5fffa-e2c0-4e1c-bf2d-4eb511b670a4",
       "name": "Save profile",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -501,7 +501,7 @@
       }
     },
     {
-      "id": "1a2c6899-70ee-4cbe-be3c-de28ddc27a95",
+      "id": "da85e6f2-9538-4020-a500-761c1d989bd2",
       "name": "Check profile",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -514,7 +514,7 @@
       }
     },
     {
-      "id": "c3c8026b-dd75-4e9f-bdc7-93fa79a58719",
+      "id": "1bdecefb-85b4-45fc-9379-b31a053f48a4",
       "name": "Profile saved?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -531,7 +531,7 @@
           },
           "conditions": [
             {
-              "id": "76a96d4b-b239-4f19-94e4-7ce5a5c70817",
+              "id": "a3055942-af12-43c0-a9ce-a323d610e89b",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -547,7 +547,7 @@
       }
     },
     {
-      "id": "0fcaa587-aa0a-428e-9b58-d1fb0ff98b5e",
+      "id": "c49292e6-d40f-4ae0-9a53-51102b1cb9e7",
       "name": "Remove auth user",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -578,7 +578,7 @@
       "notes": "Undo: no login may exist without a profile (role)."
     },
     {
-      "id": "9a455245-7021-49ee-99ca-10f6ba1d2f3d",
+      "id": "9aa1e28f-6317-47f6-81a1-22fceb87b66a",
       "name": "Profile failed",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,

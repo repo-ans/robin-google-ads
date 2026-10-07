@@ -177,7 +177,7 @@ export default function SearchTermsTab(p: TabProps) {
           },
         ]}
       />
-      {p.agency && <p className="text-xs text-ink-subtle">New searches are sorted every Monday (FF blocked words and names first, then the AI; anything unclear is "Ask Rob"). Anyone in FF can change a decision. Rob adds blocked terms in Google Ads with "Pick all marked Block" and "Add as negative" (checked by Google first, logged).</p>}
+      {p.agency && <p className="text-xs text-ink-subtle">New searches are sorted by themselves every morning (FF blocked words and names first, then the AI; anything unclear is "Ask Rob"). Anyone in FF can change a decision. Rob adds blocked terms in Google Ads with "Pick all marked Block" and "Add as negative" (checked by Google first, logged).</p>}
       {confirming && (
         <ConfirmDialog
           title={`Add ${picked.size} negative keyword(s)?`}

@@ -38,6 +38,10 @@
  *        - the confirmation page address  ?value=1995&order_id=A-1234  (names set by the data-purchase-*-param options)
  *        - an element on the page  <span data-ff-purchase-value="1995" data-ff-order-id="A-1234"></span>
  *      No amount or no order id means no purchase is sent - it never guesses.
+ *      The buyer's email and phone may be added (ffPurchase({ ..., email, phone }) or
+ *      data-ff-email / data-ff-phone on the same element). They are SHA-256 hashed in
+ *      the browser and only the hashes go to Google (enhanced conversions). Never pass
+ *      the deceased's details - the script has no field for them.
  *
  * Nothing personal is read or stored: only the click id and utm values. Needs the
  * Google tag (gtag.js) on the site for step 3 only. Plain hyphens, no emoji.
@@ -147,6 +151,42 @@
     window.gtag('event', 'conversion', { send_to: sendTo });
     try { window.sessionStorage.setItem(key, '1'); } catch (e) { /* ignore */ }
   }
+  // Enhanced conversions: normalise, then SHA-256 in the browser (Google's rules:
+  // lower case, trimmed, dots removed before @ for gmail; phone in E.164).
+  function sha256Hex(text) {
+    try {
+      if (!window.crypto || !window.crypto.subtle || !window.TextEncoder) return Promise.resolve(null);
+      return window.crypto.subtle.digest('SHA-256', new window.TextEncoder().encode(text)).then(function (buf) {
+        return Array.prototype.map.call(new Uint8Array(buf), function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+      }, function () { return null; });
+    } catch (e) { return Promise.resolve(null); }
+  }
+  function normEmail(v) {
+    var e = String(v || '').trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) return null;
+    var parts = e.split('@');
+    if (parts[1] === 'gmail.com' || parts[1] === 'googlemail.com') e = parts[0].replace(/\./g, '') + '@' + parts[1];
+    return e;
+  }
+  function normPhone(v) {
+    var raw = String(v || '').trim();
+    var d = raw.replace(/\D/g, '');
+    if (raw.charAt(0) === '+') return d.length >= 8 && d.length <= 15 ? '+' + d : null;
+    if (d.length === 10) return '+1' + d;
+    if (d.length === 11 && d.charAt(0) === '1') return '+' + d;
+    return null;
+  }
+  function hashedUserData(p) {
+    var email = normEmail(p.email);
+    var phone = normPhone(p.phone);
+    return Promise.all([email ? sha256Hex(email) : null, phone ? sha256Hex(phone) : null]).then(function (h) {
+      var out = {};
+      if (h[0]) out.sha256_email_address = h[0];
+      if (h[1]) out.sha256_phone_number = h[1];
+      return out;
+    });
+  }
+
   var purchaseSent = false;
   function sendPurchase(p) {
     var sendTo = opt('purchase-conversion');
@@ -158,11 +198,16 @@
     if (!(value > 0) || !orderId) return false;
     var key = 'ff_purchase_' + orderId;
     try { if (window.localStorage.getItem(key)) return false; } catch (e) { /* ignore */ }
-    window.gtag('event', 'conversion', {
-      send_to: sendTo, value: value, currency: (p.currency || opt('currency') || 'USD').toUpperCase().slice(0, 3), transaction_id: orderId,
-    });
+    // Marked as sent before anything async, so a refresh or a second call cannot send it twice.
     purchaseSent = true;
     try { window.localStorage.setItem(key, String(Date.now())); } catch (e) { /* ignore */ }
+    var event = { send_to: sendTo, value: value, currency: (p.currency || opt('currency') || 'USD').toUpperCase().slice(0, 3), transaction_id: orderId };
+    hashedUserData(p).then(function (userData) {
+      if (userData.sha256_email_address || userData.sha256_phone_number) window.gtag('set', 'user_data', userData);
+      window.gtag('event', 'conversion', event);
+    }, function () {
+      window.gtag('event', 'conversion', event);
+    });
     return true;
   }
   function purchaseFromPage() {
@@ -176,7 +221,12 @@
     };
     if (fromUrl && fromUrl.value && fromUrl.order_id && sendPurchase(fromUrl)) return;
     var el = document.querySelector('[data-ff-purchase-value][data-ff-order-id]');
-    if (el) sendPurchase({ value: el.getAttribute('data-ff-purchase-value'), order_id: el.getAttribute('data-ff-order-id'), currency: el.getAttribute('data-ff-currency') });
+    if (el) {
+      sendPurchase({
+        value: el.getAttribute('data-ff-purchase-value'), order_id: el.getAttribute('data-ff-order-id'), currency: el.getAttribute('data-ff-currency'),
+        email: el.getAttribute('data-ff-email'), phone: el.getAttribute('data-ff-phone'),
+      });
+    }
   }
   // For a checkout that knows the amount in JavaScript: call after the payment is confirmed.
   window.ffPurchase = function (p) { return sendPurchase(p || {}); };

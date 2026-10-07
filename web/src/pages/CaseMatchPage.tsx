@@ -138,7 +138,16 @@ export default function CaseMatchPage() {
                 GHL sub-account (phone, email and the ad click id). Nothing is copied or kept - only the counts.
               </p>
               {data.ghl ? (
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-end gap-2">
+                  {data.accounts.length > 1 && (
+                    <select className={inputClass + " max-w-xs"} value={chosen} onChange={(e) => setAccount(e.target.value)} aria-label="Google Ads account">
+                      {data.accounts.map((a) => <option key={a.customer_id} value={a.customer_id}>{a.descriptive_name ?? customerId(a.customer_id)}</option>)}
+                    </select>
+                  )}
+                  <label className="text-sm">
+                    <span className="mb-1 block text-xs font-semibold text-ink-muted">Month the families signed</span>
+                    <input type="month" className={inputClass + " w-44"} value={month} onChange={(e) => setMonth(e.target.value)} />
+                  </label>
                   <Button disabled={!chosen || busy} onClick={() => run("check", "ghl")}>Check GHL cases with Google Ads</Button>
                   {isRob && <Button variant="primary" disabled={!chosen || busy} onClick={() => setConfirming("ghl")}>Upload GHL cases to Google Ads</Button>}
                 </div>
@@ -147,7 +156,11 @@ export default function CaseMatchPage() {
               )}
             </Card>
 
-            <Card className="no-print mt-6 space-y-4 p-6">
+            {message && <div className="no-print mt-4">{message.ok ? <Notice tone="info">{message.text}</Notice> : <ErrorNote message={message.text} />}</div>}
+
+            <details className="no-print mt-6">
+              <summary className="cursor-pointer text-sm text-ink-muted">No GHL for this client? Use a file instead</summary>
+            <Card className="mt-3 space-y-4 p-6">
               <p className="font-semibold">From a file</p>
               <div className="flex flex-wrap items-end gap-3">
                 <label className="text-sm">
@@ -194,8 +207,8 @@ export default function CaseMatchPage() {
                 {cases && <Button size="sm" onClick={clearList}>Clear the list</Button>}
               </div>
               {!isRob && <p className="text-xs text-ink-subtle">FF staff can check a list. Rob uploads it.</p>}
-              {message && (message.ok ? <Notice tone="info">{message.text}</Notice> : <ErrorNote message={message.text} />)}
             </Card>
+            </details>
 
             {byMonth.size > 0 && (
               <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

@@ -20,6 +20,7 @@ export type Client = {
   towns: string[];
   service_area_notes: string | null;
   process: "funeral_home" | "online_cremation";
+  process_source?: "auto" | "manual";
   case_value_micros: number | null;
   currency_code: string | null;
   ghl_location_id: string | null;
@@ -430,6 +431,7 @@ export const actions = {
     callN8n<{ message?: ChatMessage; ok?: boolean }>("ff/campaign-chat", body),
   applyAction: (source: "chat" | "message", source_id: string) =>
     callN8n<{ ok: true; applied: ProposedAction }>("ff/apply-campaign-action", { source, source_id }),
+  websiteCheck: (client_id: string) => callN8n<{ status: string; message: string }>("ff/website-check", { client_id }),
   setupNegativeList: (client_id: string, customer_id: string) =>
     callN8n<{ ok: true; steps: string[]; note: string }>("ff/apply-campaign-action", { source: "neglist", source_id: client_id, customer_id }),
   searchTriage: (body: { client_id?: string; days?: number }) =>

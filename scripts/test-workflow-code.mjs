@@ -537,14 +537,31 @@ await test("weekly report: Slack note has the key numbers, plain text, skips qui
     { client_id: clientA, cost_micros: 400000000, currency_code: "USD", calls_90s: 12, forms: 3, tracking_ok: true, flags: [], changes: ["Spend up 33%: 400.00 USD from 300.00 USD."], decisions: ["2 new search term(s) with spend to sort: keep, block or ask Rob."], clients: { name: "McCall Gardens", process: "funeral_home" } },
     { client_id: "b", cost_micros: 0, flags: [], changes: [], decisions: [], clients: { name: "Quiet Home", process: "funeral_home" } },
   ];
-  const [out] = await run("ff-weekly-report/build-slack.js", { input: rows.map(item), nodes: { Config: [item(weekCfg)] } });
+  const [out] = await run("ff-weekly-report/build-slack.js", { input: [item({})], nodes: { Config: [item(weekCfg)], "Get week rows": rows.map(item) } });
   assert.equal(out.json.skip, false);
   assert.match(out.json.text, /McCall Gardens: spent 400 USD, 12 call\(s\) 90s\+, 3 form\(s\)\. Tracking OK\./);
   assert.match(out.json.text, /For you: 2 new search term/);
   assert.ok(!/Quiet Home/.test(out.json.text));
   assert.ok(!/[–—]/.test(out.json.text));
-  const [off] = await run("ff-weekly-report/build-slack.js", { input: rows.map(item), nodes: { Config: [item({ ...weekCfg, send_slack: false })] } });
+  const [off] = await run("ff-weekly-report/build-slack.js", { input: [item({})], nodes: { Config: [item({ ...weekCfg, send_slack: false })], "Get week rows": rows.map(item) } });
   assert.equal(off.json.skip, true);
+});
+
+await test("weekly report: the first Monday of a month adds signed families and cost per signed case", async () => {
+  const rows = [{ client_id: clientA, cost_micros: 400000000, currency_code: "USD", calls_90s: 12, forms: 3, tracking_ok: true, flags: [], changes: [], decisions: [], clients: { name: "Hillside Funeral Home", process: "funeral_home" } }];
+  const month = [
+    { client_id: clientA, client_name: "Hillside Funeral Home", currency_code: "USD", spend_micros: 3200000000, signed_cases: 5, matched: 3 },
+    { client_id: "b", client_name: "Other Home", currency_code: "USD", spend_micros: 900000000, signed_cases: 0, matched: 0 },
+  ];
+  // week of Sep 28 - Oct 4: the note goes out Monday Oct 5 (first Monday of October)
+  const first = { ...weekCfg, week_start: "2026-09-28", week_end: "2026-10-04" };
+  const [out] = await run("ff-weekly-report/build-slack.js", { input: month.map(item), nodes: { Config: [item(first)], "Get week rows": rows.map(item) } });
+  assert.match(out.json.text, /September 2026 - signed families and cost per signed case:/);
+  assert.match(out.json.text, /Hillside Funeral Home: spent 3,200 USD, 5 signed \(3 matched to ads\), 640 USD per signed case\./);
+  assert.match(out.json.text, /Other Home: spent 900 USD, no case list uploaded yet\./);
+  const later = { ...weekCfg, week_start: "2026-10-05", week_end: "2026-10-11" };
+  const [mid] = await run("ff-weekly-report/build-slack.js", { input: month.map(item), nodes: { Config: [item(later)], "Get week rows": rows.map(item) } });
+  assert.ok(!/signed families/.test(mid.json.text), "only on the first Monday of the month");
 });
 
 await test("ghl setup: plans only the missing fields and tag; check reports without creating", async () => {
@@ -855,14 +872,15 @@ await test("tracking plan: turns on call reporting, creates both 90s actions, pl
   assert.equal(acct.url_suffix, ":mutate");
   assert.deepEqual(acct.body.operation.update.callReportingSetting, { callReportingEnabled: true, callConversionReportingEnabled: true });
   assert.equal(conv.url_suffix, "/conversionActions:mutate");
-  assert.deepEqual(conv.op_types, ["AD_CALL", "WEBSITE_CALL", "UPLOAD_CLICKS", "UPLOAD_CALLS"]);
+  assert.deepEqual(conv.op_types, ["AD_CALL", "WEBSITE_CALL", "UPLOAD_CLICKS", "UPLOAD_CALLS", "WEBPAGE"]);
   for (const op of conv.body.operations.slice(0, 2)) {
     assert.equal(op.create.phoneCallDurationSeconds, 90);
     assert.equal(op.create.primaryForGoal, true);
     assert.equal(op.create.valueSettings.defaultValue, 3500);
   }
-  assert.deepEqual(conv.body.operations.map((o) => o.create.name), ["Calls from ads 90s+", "Calls from website 90s+", "Case signed", "Case signed - calls"]);
-  for (const op of conv.body.operations.slice(2)) {
+  assert.deepEqual(conv.body.operations.map((o) => o.create.name), ["Calls from ads 90s+", "Calls from website 90s+", "Case signed", "Case signed - calls", "Preplanning form"]);
+  assert.deepEqual(conv.body.operations[4].create, { name: "Preplanning form", type: "WEBPAGE", category: "SUBMIT_LEAD_FORM", status: "ENABLED", primaryForGoal: true, countingType: "ONE_PER_CLICK" });
+  for (const op of conv.body.operations.slice(2, 4)) {
     assert.equal(op.create.category, "CONVERTED_LEAD");
     assert.equal(op.create.primaryForGoal, false, "case signed is reported, bidding stays Rob's call");
     assert.equal(op.create.phoneCallDurationSeconds, undefined);
@@ -875,12 +893,12 @@ await test("tracking plan: turns on call reporting, creates both 90s actions, pl
 
 await test("tracking plan: existing 90s actions and asset are left alone; our action at 60s is fixed; guards", async () => {
   const done = trackCtx({ call_reporting_enabled: true, call_conversion_reporting_enabled: true, account_call_assets: 1,
-    call_actions: [{ id: "5", name: "Calls from ads 90s+", type: "AD_CALL", status: "ENABLED", seconds: 90 }, { id: "6", name: "Calls from website 90s+", type: "WEBSITE_CALL", status: "ENABLED", seconds: 90 }, { id: "8", name: "Case signed", type: "UPLOAD_CLICKS", status: "ENABLED", seconds: null }, { id: "9", name: "Case signed - calls", type: "UPLOAD_CALLS", status: "ENABLED", seconds: null }] });
+    call_actions: [{ id: "5", name: "Calls from ads 90s+", type: "AD_CALL", status: "ENABLED", seconds: 90 }, { id: "6", name: "Calls from website 90s+", type: "WEBSITE_CALL", status: "ENABLED", seconds: 90 }, { id: "8", name: "Case signed", type: "UPLOAD_CLICKS", status: "ENABLED", seconds: null }, { id: "9", name: "Case signed - calls", type: "UPLOAD_CALLS", status: "ENABLED", seconds: null }, { id: "10", name: "Leads", type: "WEBPAGE", category: "SUBMIT_LEAD_FORM", status: "ENABLED", seconds: null }] });
   const [already] = await run("ff-apply-campaign-action/plan.js", { input: [item(done)], nodes: trackNodes() });
   assert.equal(already.json.status, 409);
 
   const fix = trackCtx({ call_reporting_enabled: true, call_conversion_reporting_enabled: true,
-    call_actions: [{ id: "5", name: "Calls from ads 90s+", type: "AD_CALL", status: "ENABLED", seconds: 60 }, { id: "6", name: "Calls from website 90s+", type: "WEBSITE_CALL", status: "ENABLED", seconds: 90 }, { id: "8", name: "Case signed", type: "UPLOAD_CLICKS", status: "ENABLED", seconds: null }, { id: "9", name: "Case signed - calls", type: "UPLOAD_CALLS", status: "ENABLED", seconds: null }] });
+    call_actions: [{ id: "5", name: "Calls from ads 90s+", type: "AD_CALL", status: "ENABLED", seconds: 60 }, { id: "6", name: "Calls from website 90s+", type: "WEBSITE_CALL", status: "ENABLED", seconds: 90 }, { id: "8", name: "Case signed", type: "UPLOAD_CLICKS", status: "ENABLED", seconds: null }, { id: "9", name: "Case signed - calls", type: "UPLOAD_CALLS", status: "ENABLED", seconds: null }, { id: "10", name: "Leads", type: "WEBPAGE", category: "SUBMIT_LEAD_FORM", status: "ENABLED", seconds: null }] });
   const [fixed] = await run("ff-apply-campaign-action/plan.js", { input: [item(fix)], nodes: trackNodes() });
   assert.equal(fixed.json.tracking.requests_a.length, 1);
   assert.deepEqual(fixed.json.tracking.requests_a[0].body.operations[0].update,
@@ -942,7 +960,7 @@ await test("tracking records: both steps logged; answer lists the steps", async 
   nodes["Apply call asset"] = [ok];
   const out = await run("ff-apply-campaign-action/records.js", { nodes });
   assert.equal(out[0].json.respond.status, 200);
-  assert.equal(out[0].json.respond.body.steps.length, 6, "settings, 2 call actions, 2 case signed actions, call asset");
+  assert.equal(out[0].json.respond.body.steps.length, 7, "settings, 2 call actions, 2 case signed actions, preplanning form, call asset");
   const logs = out[0].json.body;
   assert.deepEqual(logs.map((l) => [l.request.step, l.validate_only]), [
     ["account", true], ["conversion_actions", true], ["account", false], ["conversion_actions", false],
@@ -966,7 +984,7 @@ await test("tracking plan (real account shape): 10s call actions are set to 90s,
   assert.equal(out.json.tracking.requests_a.length, 1, "account settings already on");
   const ops = out.json.tracking.requests_a[0].body.operations;
   assert.ok(ops.slice(0, 2).every((o) => o.update && !o.create), "existing call actions are updated, no second call action");
-  assert.deepEqual(ops.slice(2).map((o) => o.create.name), ["Case signed", "Case signed - calls"]);
+  assert.deepEqual(ops.slice(2).map((o) => o.create.name), ["Case signed", "Case signed - calls", "Preplanning form"]);
   assert.deepEqual(ops.slice(0, 2).map((o) => [o.update.resourceName, o.update.phoneCallDurationSeconds]), [
     ["customers/1234567890/conversionActions/273335022", 90],
     ["customers/1234567890/conversionActions/7155638308", 90],
@@ -1168,6 +1186,81 @@ await test("case match from GHL: no sub-account, missing scope and an empty mont
   const [empty] = await run("ff-case-match/plan.js", { nodes });
   assert.equal(empty.json.status, 404);
   assert.match(empty.json.error, /set an opportunity to "Won"/);
+});
+
+await test("tracking plan: an online cremation client gets the paid-arrangement and started actions, not the form", async () => {
+  const [out] = await run("ff-apply-campaign-action/plan.js", { input: [item(trackCtx({ process: "online_cremation" }))], nodes: trackNodes() });
+  const ops = out.json.tracking.requests_a.find((r) => r.label === "conversion_actions").body.operations;
+  const web = ops.filter((o) => o.create && o.create.type === "WEBPAGE").map((o) => o.create);
+  assert.deepEqual(web.map((w) => [w.name, w.category, w.primaryForGoal, w.countingType]), [
+    ["Online arrangement paid", "PURCHASE", true, "MANY_PER_CLICK"],
+    ["Arrangement started", "BEGIN_CHECKOUT", false, "ONE_PER_CLICK"],
+  ]);
+  assert.equal(web[0].valueSettings.alwaysUseDefaultValue, false, "the real amount paid is used");
+});
+
+// ------------------------------------------------------------------ website check (tasks 3 and 7)
+await test("website check: pages per client, at most 5, bad urls dropped", async () => {
+  const out = await run("ff-website-check/pages.js", { input: [
+    item({ client_id: clientA, process: "funeral_home", urls: ["https://home.test/", "https://home.test/", "javascript:alert(1)", "https://home.test/a", "https://home.test/b", "https://home.test/c", "https://home.test/d", "https://home.test/e"] }),
+  ] });
+  assert.deepEqual(out.map((o) => o.json.url), ["https://home.test/", "https://home.test/a", "https://home.test/b", "https://home.test/c", "https://home.test/d"]);
+  const none = await run("ff-website-check/pages.js", { input: [item({})] });
+  assert.equal(none[0].json.none, true);
+});
+
+await test("website check: finds our script and settings, Google tag, GHL form, checkout and platform - and keeps no page text", async () => {
+  const wp = `<html><head><link href="/wp-content/themes/x.css"><script async src="https://www.googletagmanager.com/gtag/js?id=AW-123456789"></script></head>
+    <body><p>Call Jane Smith at the front desk</p><a href="tel:+12505550100">Call</a>
+    <iframe src="https://api.leadconnectorhq.com/widget/form/abc"></iframe>
+    <script src="https://dash.test/ff-click-id.js" defer data-phone-conversion="AW-123456789/x" data-phone="(250) 555-0100"></script></body></html>`;
+  const shop = `<html><body><div id="__nuxt"></div><script src="https://assets.cdn.filesafe.space/x.js"></script><script src="https://js.stripe.com/v3/"></script></body></html>`;
+  const nodes = { Pages: [item({ client_id: clientA, url: "https://home.test/" }), item({ client_id: clientA, url: "https://shop.test/" }), item({ client_id: clientA, url: "https://down.test/" })] };
+  const [out] = await run("ff-website-check/read-pages.js", {
+    input: [item({ statusCode: 200, body: wp }), item({ statusCode: 200, body: shop }), item({ statusCode: 503, body: "" })], nodes,
+  });
+  const [a, b, c] = out.json.rows;
+  assert.equal(a.platform, "wordpress");
+  assert.equal(a.has_ff_script, true);
+  assert.deepEqual(a.ff_settings, ["phone-conversion"]);
+  assert.equal(a.has_gtag, true);
+  assert.deepEqual(a.gtag_ids, ["AW-123456789"]);
+  assert.equal(a.has_ghl_form, true);
+  assert.equal(a.has_form, true);
+  assert.equal(a.has_checkout, false);
+  assert.equal(a.phones_seen, 1);
+  assert.equal(b.platform, "ghl");
+  assert.equal(b.checkout_hint, "stripe");
+  assert.equal(b.has_ff_script, false);
+  assert.equal(c.error, "status 503");
+  assert.ok(!JSON.stringify(out.json).includes("Jane") && !JSON.stringify(out.json).includes("555"), "no page text or numbers kept");
+});
+
+await test("GHL auto-link: name, website or phone; only unambiguous matches; never a sub-account already used", async () => {
+  const nodes = {
+    "GHL: list sub-accounts": [item({ statusCode: 200, body: { locations: [
+      { id: "L1", name: "Pacific Coast Cremation Inc.", website: "https://pacificcoastcremation.com" },
+      { id: "L2", name: "Hillside Funeral Home", phone: "+1 (250) 555-0100" },
+      { id: "L3", name: "Twin A" }, { id: "L4", name: "Twin A" },
+      { id: "L5", name: "Already Linked Home" },
+    ] } })],
+    "Clients without GHL": [
+      item({ client_id: "c1", name: "Pacific Coast Cremation", website_url: null, phone: null }),
+      item({ client_id: "c2", name: "Hillside", website_url: null, phone: "250-555-0100" }),
+      item({ client_id: "c3", name: "Twin A", website_url: null, phone: null }),
+      item({ client_id: "c4", name: "Already Linked Home", website_url: null, phone: null }),
+      item({ client_id: "c5", name: "Nobody", website_url: "https://www.pacificcoastcremation.com/", phone: null }),
+    ],
+    "Linked GHL sub-accounts": [item({ ghl_location_id: "L5" })],
+  };
+  const out = await run("ff-website-check/match-ghl.js", { nodes });
+  assert.deepEqual(out.map((o) => [o.json.path, o.json.body.ghl_location_id]), [
+    ["clients?id=eq.c1&ghl_location_id=is.null", "L1"],
+    ["clients?id=eq.c2&ghl_location_id=is.null", "L2"],
+  ], "c3 is ambiguous, c4's sub-account is taken, c5's website matches L1 which c1 already took");
+  nodes["GHL: list sub-accounts"] = [item({ statusCode: 401, body: {} })];
+  const none = await run("ff-website-check/match-ghl.js", { nodes });
+  assert.equal(none[0].json.matched, 0);
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ", some failed" : ""}`);

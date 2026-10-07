@@ -69,7 +69,7 @@ export default function ClientForm({ client, onClose, onSaved }: { client?: Clie
       website_url: f.website_url,
       phone: f.phone,
       towns: toList(f.towns),
-      process: f.process,
+      ...(!client || f.process !== client.process ? { process: f.process } : {}),
       currency_code: f.currency_code,
       case_value: f.case_value === "" ? null : Number(f.case_value),
       competitor_terms: toList(f.competitor_terms),

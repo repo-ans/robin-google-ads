@@ -1,8 +1,11 @@
 // Monday Slack note to Rob: per client the three key numbers, tracking, what
 // changed and what he needs to decide. Calm tone, plain hyphens, no emoji,
 // no search terms and no personal data (weekly_stats holds counts only).
+// On the first Monday of a month it adds last month's signed families, matches
+// and cost per signed case (the number Rob cares about most).
 const cfg = $('Config').first().json;
-const rows = $input.all().map((i) => i.json).filter((r) => r && r.client_id);
+const rows = $('Get week rows').all().map((i) => i.json).filter((r) => r && r.client_id);
+const monthRows = $input.all().map((i) => i.json).filter((r) => r && r.client_id);
 
 if (!cfg.send_slack || !cfg.SLACK_CHANNEL) {
   return [{ json: { skip: true, reason: cfg.SLACK_CHANNEL ? 'not requested' : 'no SLACK_CHANNEL' } }];
@@ -31,6 +34,21 @@ for (const r of shown.slice(0, 20)) {
   for (const x of r.decisions || []) lines.push(`- For you: ${x}`);
 }
 if (shown.length > 20) lines.push('', `And ${shown.length - 20} more client(s) on the dashboard.`);
+
+// First Monday of the month (the Monday after this report's week is day 1-7).
+const monday = new Date(`${cfg.week_end}T00:00:00Z`);
+monday.setUTCDate(monday.getUTCDate() + 1);
+if (monday.getUTCDate() <= 7 && monthRows.length) {
+  const last = new Date(Date.UTC(monday.getUTCFullYear(), monday.getUTCMonth() - 1, 1));
+  lines.push('', `${last.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })} - signed families and cost per signed case:`);
+  for (const m of monthRows.slice(0, 20)) {
+    const per = num(m.signed_cases) > 0 ? `, ${money(num(m.spend_micros) / num(m.signed_cases), m.currency_code)} per signed case` : '';
+    const what = num(m.signed_cases) > 0
+      ? `${count(m.signed_cases)} signed (${count(m.matched)} matched to ads)${per}`
+      : 'no case list uploaded yet';
+    lines.push(`- ${m.client_name}: spent ${money(m.spend_micros, m.currency_code)}, ${what}.`);
+  }
+}
 if (cfg.DASHBOARD_URL) lines.push('', `Dashboard: ${cfg.DASHBOARD_URL}`);
 
 const text = lines.join('\n').replace(/[–—]/g, '-');

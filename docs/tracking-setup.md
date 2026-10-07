@@ -173,15 +173,19 @@ An "arrangement started" event counts the start of the flow.
 1. Flow map first (Arni): which page starts the arrangement, which system takes the payment (WooCommerce, GHL order
    form, Stripe checkout, other), and which page the family sees **only after** a confirmed payment. Write the three
    addresses down. The confirmation page must not be reachable without paying (no direct link in menus).
-2. Google Ads conversion actions (section 4 style, by hand): "Arrangement started" (Begin checkout, count One,
-   secondary) and "Online arrangement paid" (Purchase, count Every, transaction-specific value, primary).
+2. Google Ads conversion actions: Rob's **Set up call tracking** (client page) creates "Online arrangement paid" (Purchase,
+   count Every, the real amount, primary) and "Arrangement started" (Begin checkout, secondary) when the client type is
+   Online cremation - and "Preplanning form" for funeral homes. **Copy website script** then fills in their values.
+   Turn on enhanced conversions for the account (Google Ads > Goals > Settings) so the hashed buyer email and phone are used.
 3. The confirmation page must give the script the amount and the order id - one of:
    - the checkout code calls `window.ffPurchase({ value: 1995, order_id: 'A-1234', currency: 'USD' })` after payment
      (before the script has loaded: `(window.ffPurchaseQueue = window.ffPurchaseQueue || []).push({...})`);
    - the confirmation address carries them, e.g. `/order-confirmed?total=1995&order=A-1234`
      (then set `data-purchase-value-param="total"` and `data-purchase-order-param="order"`);
    - the page has `<span data-ff-purchase-value="1995" data-ff-order-id="A-1234" hidden></span>`.
-   Never put the family's name or email in the address or on these elements.
+   The buyer's email and phone may be passed as well (`ffPurchase({ ..., email, phone })` or `data-ff-email` /
+   `data-ff-phone`): the script hashes them (SHA-256) in the browser and only the hashes go to Google. Never pass anything
+   about the person who died, and never put names or emails in the address.
 4. Add to the script tag from section 3:
 
    ```html

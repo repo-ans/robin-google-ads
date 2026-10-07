@@ -2,7 +2,7 @@
   "name": "ff-ghl-setup",
   "nodes": [
     {
-      "id": "546cb23c-ea48-458e-b0bc-548833410d80",
+      "id": "ca9b77be-93f7-44c6-9244-c908d7672fb9",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -22,7 +22,7 @@
       "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
     },
     {
-      "id": "565ba2af-27fb-4e80-a478-400f051e089d",
+      "id": "f62aac0b-db3b-46d0-a57d-c741661f7c2b",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -36,7 +36,7 @@
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
     },
     {
-      "id": "eef77480-d839-4527-98e9-3264aeefd721",
+      "id": "6f8fd272-e8e2-43a0-aa73-6f0daea568ce",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -50,7 +50,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "481afe7b-b77e-49a7-a2a3-344e9918dbdb",
+      "id": "5034a998-cab2-4d4b-b1b6-2f8b68112547",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -86,7 +86,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "0e7d4152-3b55-4327-937e-2b817b6f8c73",
+      "id": "590b6c82-4232-4954-8f52-499ba4ef2c49",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -131,7 +131,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "bfd3ae32-ab25-4b82-b956-9d2801e3b735",
+      "id": "a7ddeeea-ba7b-4049-8a41-616fa78a8eae",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -145,7 +145,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "f236576b-9bcc-4ab0-bd23-faedce36168f",
+      "id": "fe57beb1-f789-4de6-adf1-715a902a8ab4",
       "parameters": {
         "conditions": {
           "options": {
@@ -178,7 +178,7 @@
       ]
     },
     {
-      "id": "b114a23e-5147-4177-ab2b-66a8b78986fd",
+      "id": "b2d28875-f27f-43b1-af9b-23d54c878a45",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -196,7 +196,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "563b8aa1-de02-4698-b23f-3c76efd39b79",
+      "id": "7239b387-607b-4cbc-b4ec-b033c9449115",
       "name": "Validate input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -209,7 +209,7 @@
       }
     },
     {
-      "id": "9245e0dc-12ec-4eff-9142-cd998b64d7ef",
+      "id": "e0dfda91-071b-4dfc-a9e4-d6076c00c7af",
       "name": "Validate input ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -226,7 +226,7 @@
           },
           "conditions": [
             {
-              "id": "616a0e08-a05d-4b34-9922-15b6c52d1ebc",
+              "id": "13a5be3d-66d2-45f2-a001-60745fc0b3e5",
               "leftValue": "={{ $json.valid === true }}",
               "rightValue": true,
               "operator": {
@@ -242,7 +242,7 @@
       }
     },
     {
-      "id": "1990eb2b-2151-47b7-b6e5-03e916185d7f",
+      "id": "457a24a5-63ad-4e66-b9a4-fb92d824ceb3",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -259,7 +259,7 @@
       }
     },
     {
-      "id": "2c70cdec-f8d0-467c-9a9e-41873e464794",
+      "id": "ed6eb710-3b40-4b86-9aaa-32b85b83ccce",
       "name": "List locations?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -276,7 +276,7 @@
           },
           "conditions": [
             {
-              "id": "a96470c6-7142-4b6b-8878-0d82c5f35f24",
+              "id": "790c505a-5793-4149-8587-ddba5456afa0",
               "leftValue": "={{ $json.action === 'list_locations' }}",
               "rightValue": true,
               "operator": {
@@ -292,7 +292,7 @@
       }
     },
     {
-      "id": "7af52d5b-c80d-4d6c-9612-d39a80af755d",
+      "id": "6a014779-60b7-4fb6-a0fd-3e535233eb5c",
       "name": "GHL: list locations",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -336,7 +336,7 @@
       "notes": "Read: FF's sub-accounts (id, name, town) with the agency key."
     },
     {
-      "id": "891ffc1a-e49e-4426-98ee-c20a9d3698e4",
+      "id": "963c150d-94ee-44dd-aaff-c731adaecc10",
       "name": "Format locations",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -349,7 +349,7 @@
       }
     },
     {
-      "id": "eb7ab5b0-89ce-4138-acbe-1f38ea35527b",
+      "id": "11115715-2dc8-47a4-850a-0de11627a5d1",
       "name": "Get client",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -373,7 +373,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "d6dc9de8-7d02-40b8-94e8-8cf5c83ba137",
+      "id": "100297c4-78f8-48b0-bbfb-bb8ff440fbae",
       "name": "Check client",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -386,7 +386,7 @@
       }
     },
     {
-      "id": "a92e4306-422c-487a-8540-f17993069079",
+      "id": "61425099-3c0a-4354-b8c7-ed725ae8e6d6",
       "name": "Client ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -403,7 +403,7 @@
           },
           "conditions": [
             {
-              "id": "592b92d6-7456-40c3-be9c-15cd02a70a6a",
+              "id": "3eb3f4e3-a7a2-47dd-b055-742247802f3f",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -419,7 +419,7 @@
       }
     },
     {
-      "id": "6fc8f345-c79e-4343-ae2b-3254b3149071",
+      "id": "c062b03e-3976-4032-9b47-9e034395ad45",
       "name": "GHL: find agency",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -464,7 +464,7 @@
       "notes": "The agency (company) id of this sub-account, read with FF's GHL app. Used for the sub-account token below."
     },
     {
-      "id": "5dc59698-9c27-42f0-a2f4-7d6b58d6af89",
+      "id": "2220d3ed-9c8e-44b8-b1a7-92878dd75eb5",
       "name": "GHL: location token",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -523,7 +523,7 @@
       "notes": "FF GHL app (agency) -> a short-lived token for this client's sub-account. The app must be installed on the sub-account."
     },
     {
-      "id": "e90eb923-a54b-4bb7-b83b-780898cc81e7",
+      "id": "ea81218f-960d-4064-bd29-2e8fd4603cab",
       "name": "GHL: get custom fields",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -563,7 +563,7 @@
       "notes": "Read: the sub-account's contact custom fields."
     },
     {
-      "id": "ae53f7ba-3967-4b26-8535-036d1bb77442",
+      "id": "22b7dfae-e520-4a17-911f-daffec6fb148",
       "name": "GHL: get tags",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -602,7 +602,7 @@
       }
     },
     {
-      "id": "215ce7a1-57b4-4e91-9040-34bae5907a4c",
+      "id": "16c917ab-0732-412b-bee2-f453aa6115e2",
       "name": "Plan",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -615,7 +615,7 @@
       }
     },
     {
-      "id": "e7ceaccf-bcff-4525-a0b4-4f0ea49115e2",
+      "id": "77034ea2-c9da-4154-bd32-a1f6852c0dda",
       "name": "Anything to create?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -632,7 +632,7 @@
           },
           "conditions": [
             {
-              "id": "a6b6349a-925a-4b6a-892c-0ae0b5a57302",
+              "id": "d410a0e1-4662-42b9-9abb-0772eabb232d",
               "leftValue": "={{ $json.kind === 'create' }}",
               "rightValue": true,
               "operator": {
@@ -648,7 +648,7 @@
       }
     },
     {
-      "id": "7337df16-9e87-4352-b80d-9047b538f73e",
+      "id": "752fa840-7814-446e-901f-cab1863f4fdc",
       "name": "GHL: create",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -697,7 +697,7 @@
       "notes": "One field or tag per item: contact custom fields (TEXT) and the Google Ads tag. Runs only for 'setup'."
     },
     {
-      "id": "72e15a88-24ec-449f-9fe4-7fa285cc4061",
+      "id": "023beaa3-69f8-43d9-8686-c85730b4844d",
       "name": "Summarize",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,

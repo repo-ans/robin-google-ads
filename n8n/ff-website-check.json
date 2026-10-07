@@ -1,0 +1,957 @@
+{
+  "name": "ff-website-check",
+  "nodes": [
+    {
+      "id": "1767f963-bb05-4f40-abc5-3255de1c2932",
+      "name": "Schedule: daily 06:45",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 6,
+              "triggerAtMinute": 45
+            }
+          ]
+        }
+      },
+      "notes": "Every client, every day after the 06:00 sync. Workflow settings > Timezone: FF's time zone."
+    },
+    {
+      "id": "734615c6-b0b9-404e-8532-ffdcd78d2e34",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        400
+      ],
+      "webhookId": "ff-website-check",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ff/website-check",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "http://localhost:5173"
+        }
+      },
+      "notes": "\"Check website\" on the client page. Answers 202 at once; the check carries on."
+    },
+    {
+      "id": "f5e4a69a-b221-4559-9f56-f5bc034df1d0",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Non-secret settings for ff-website-check. n8n credential: FF Supabase (service role).\n// Daily 06:45 for every client (after the sync), and when a client is saved on the dashboard.\n// Webhook body (optional): { client_id }\n// Reads public pages only - no login to any website, nothing personal is kept.\nconst SETTINGS = {\n  SUPABASE_URL: 'https://SET-ME.supabase.co',\n  SUPABASE_ANON_KEY: 'SET-ME',\n  ALLOWED_ROLES: ['rob_admin', 'ff_staff'],\n  GHL_COMPANY_ID: 'SET-ME', // only a fallback - the agency id is read from a client already linked to GHL\n};\n\nconst src = $input.first().json || {};\nconst fromWebhook = Boolean(src.headers);\nconst body = fromWebhook && src.body && typeof src.body === 'object' ? src.body : {};\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\nreturn [{\n  json: {\n    ...SETTINGS,\n    body,\n    trigger: fromWebhook ? 'manual' : 'schedule',\n    only_client_id: typeof body.client_id === 'string' && uuid.test(body.client_id) ? body.client_id : null,\n  },\n}];\n"
+      },
+      "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import. Pick the FF GHL OAuth credential on the GHL nodes."
+    },
+    {
+      "id": "d50ea4e5-a2b5-4680-a9bb-43d45d360b70",
+      "name": "Manual run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "0f142170-baca-4a7a-bc2d-d8001188d3a5",
+              "leftValue": "={{ $('Config').first().json.trigger === 'manual' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "afa724be-35e1-4902-bac5-9871460cc8bc",
+      "parameters": {
+        "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
+      },
+      "name": "Auth: read token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        400
+      ],
+      "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
+    },
+    {
+      "id": "4b2fb8a2-5694-496a-b502-f82cd2059c4e",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Config').first().json.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.token || 'missing' }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: verify token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        400
+      ],
+      "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
+    },
+    {
+      "id": "404a78da-5754-40ad-add1-7e7064e6e114",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "=eq.{{ (($json.statusCode === 200 && $json.body && /^[0-9a-f-]{36}$/.test($json.body.id)) ? $json.body.id : '00000000-0000-0000-0000-000000000000') }}"
+            },
+            {
+              "name": "select",
+              "value": "user_id,email,role,client_id,disabled"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Auth: load profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        400
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
+    },
+    {
+      "id": "b12256ea-3d26-437f-abde-04522f1026dd",
+      "parameters": {
+        "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
+      },
+      "name": "Auth: check role",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        400
+      ],
+      "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
+    },
+    {
+      "id": "8e633fdf-8f58-4fb7-a955-131a609d47dd",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "a1b2c3d4-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Auth: allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        400
+      ]
+    },
+    {
+      "id": "c77d08e2-a67f-4571-be41-bcb864da834c",
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "name": "Respond: denied",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        600
+      ],
+      "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
+    },
+    {
+      "id": "0f2ce4c5-3d33-4aa5-bd29-4d21b0c7e80b",
+      "name": "Respond: accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'started', message: 'Checking. The client page updates in a minute.' }) }}",
+        "options": {
+          "responseCode": 202
+        }
+      }
+    },
+    {
+      "id": "35858d30-35af-419e-9e49-dc470909aefb",
+      "name": "Get pages to check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/rpc/ff_website_targets",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_client_id: $('Config').first().json.only_client_id }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "id": "9be1c5d9-8262-467f-8bba-d4d9d9d48b1a",
+      "name": "Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// One item per page to check: the client's website (Edit client) and the landing\n// pages of its enabled ads (from ff_website_targets), at most 5 per client.\n// Emits { none: true } when there is nothing to check.\nconst rows = $input.all().map((i) => i.json).filter((r) => r && r.client_id && Array.isArray(r.urls));\nconst out = [];\nfor (const r of rows) {\n  const seen = new Set();\n  for (const raw of r.urls) {\n    const url = String(raw || '').trim();\n    if (!/^https?:\\/\\/[^\\s]+$/i.test(url) || url.length > 500 || seen.has(url)) continue;\n    seen.add(url);\n    out.push({ json: { client_id: r.client_id, process: r.process, url } });\n    if (seen.size >= 5) break;\n  }\n}\nreturn out.length ? out : [{ json: { none: true } }];\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "bdfcc55c-1b6e-4701-9853-f6c1f460c1fc",
+      "name": "Any pages?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "b7c1fb32-a3be-408e-be14-c754f9df106a",
+              "leftValue": "={{ !$json.none }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "50c83249-6ebe-48b3-8be3-37d4e37359be",
+      "name": "Fetch page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (compatible; FF-website-check/1.0)"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 400
+            }
+          },
+          "timeout": 20000
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Public page only, no login. One request at a time."
+    },
+    {
+      "id": "19254ec2-a935-4bb9-9ab2-a3fc77a443df",
+      "name": "Read pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Reads each fetched public page (no login) and records what is on it - never\n// any text or personal data from the page, only yes/no answers, tag ids and a\n// count of phone links. Each answer is matched to its page with itemMatching(i).\n// Pages built in the browser (some site builders) or tags loaded through Google\n// Tag Manager may not show in the HTML; the dashboard says so.\nconst now = new Date().toISOString();\nconst rows = [];\n$input.all().forEach((item, i) => {\n  const page = $('Pages').itemMatching(i).json;\n  const r = item.json || {};\n  const ok = r.statusCode >= 200 && r.statusCode < 400;\n  const html = typeof r.body === 'string' ? r.body.slice(0, 3000000) : typeof r.data === 'string' ? r.data.slice(0, 3000000) : '';\n  const h = html.toLowerCase();\n  const has = (re) => re.test(h);\n\n  const ids = [...new Set((html.match(/\\b(AW-\\d{6,12}|G-[A-Z0-9]{6,12}|GTM-[A-Z0-9]{4,10})\\b/g) || []))].slice(0, 10);\n  const ffSettings = ['phone-conversion', 'form-conversion', 'thank-you-path', 'start-conversion', 'purchase-conversion', 'purchase-path']\n    .filter((k) => h.includes(`data-${k}`));\n  const ghlForm = has(/(leadconnectorhq\\.com|msgsndr\\.com)\\/widget\\/(form|survey|booking)|form_embed\\.js/);\n  const leadForm = ghlForm || has(/<form[\\s\\S]{0,6000}?(type=[\"']?(email|tel)\\b|name=[\"']?(email|phone)\\b)/);\n  let checkout = null;\n  if (has(/js\\.stripe\\.com|checkout\\.stripe\\.com|buy\\.stripe\\.com/)) checkout = 'stripe';\n  else if (has(/woocommerce/)) checkout = 'woocommerce';\n  else if (has(/paypal\\.com\\/sdk|paypalobjects\\.com/)) checkout = 'paypal';\n  else if (has(/squareup\\.com|square\\.site/)) checkout = 'square';\n  else if (has(/(leadconnectorhq\\.com|msgsndr\\.com)[^\"']*(order|payment)|order-form/)) checkout = 'ghl order form';\n  else if (has(/href=[\"'][^\"']*(checkout|arrange-online|arrange-now|pay-online|pay-now)[^\"']*[\"']/)) checkout = 'checkout link';\n  let platform = 'other';\n  if (has(/wp-content|wp-includes/)) platform = 'wordpress';\n  else if (has(/assets\\.cdn\\.filesafe\\.space|leadconnectorhq|msgsndr/) && has(/__nuxt|nuxt/)) platform = 'ghl';\n  else if (has(/wixstatic\\.com|wix\\.com/)) platform = 'wix';\n  else if (has(/squarespace/)) platform = 'squarespace';\n  else if (has(/cdn\\.shopify\\.com/)) platform = 'shopify';\n\n  rows.push({\n    client_id: page.client_id,\n    url: page.url,\n    checked_at: now,\n    status_code: r.statusCode || null,\n    error: ok ? null : String((r.error && r.error.message) || `status ${r.statusCode || 'none'}`).slice(0, 200),\n    platform: ok ? platform : null,\n    has_ff_script: ok && h.includes('ff-click-id.js'),\n    ff_settings: ok ? ffSettings : [],\n    has_gtag: ok && has(/googletagmanager\\.com\\/gtag\\/js|gtag\\(/),\n    gtag_ids: ok ? ids : [],\n    has_gtm: ok && has(/googletagmanager\\.com\\/gtm\\.js|\\bgtm-[a-z0-9]{4,10}\\b/),\n    has_ghl_form: ok && ghlForm,\n    has_form: ok && leadForm,\n    has_checkout: ok && Boolean(checkout),\n    checkout_hint: ok ? checkout : null,\n    phones_seen: ok ? (h.match(/href=[\"']tel:/g) || []).length : 0,\n  });\n});\nreturn [{ json: { rows, count: rows.length } }];\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "0888f7c8-fe7e-4862-903c-2bc8d1601822",
+      "name": "Save checks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/website_checks?on_conflict=client_id,url",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.rows) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      }
+    },
+    {
+      "id": "da10582a-b9d2-485a-b428-723249e31708",
+      "name": "Apply findings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/rpc/ff_apply_website_findings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_client_id: $('Config').first().json.only_client_id }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "executeOnce": true,
+      "notes": "Client type (online payment found = online cremation, unless set by hand), website and phone when empty."
+    },
+    {
+      "id": "d41f9be8-b682-4665-a5cb-d03b6407e8d1",
+      "name": "Clients without GHL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3520,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/rpc/ff_clients_without_ghl",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "id": "5ae65518-774f-4f67-9b47-ea3dddd3a95a",
+      "name": "Linked GHL sub-accounts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3740,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/clients?select=ghl_location_id&ghl_location_id=not.is.null&order=updated_at.desc",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "id": "ee70c5b3-c45e-4b7b-83fa-a7df847bf2b1",
+      "name": "GHL: agency",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3960,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://services.leadconnectorhq.com/locations/{{ $('Linked GHL sub-accounts').first().json.ghl_location_id || 'none' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Version",
+              "value": "2021-07-28"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "oAuth2Api": {
+          "id": "",
+          "name": "FF GHL OAuth"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "executeOnce": true,
+      "notes": "FF's GHL agency id, read from a client already linked (Config GHL_COMPANY_ID is the fallback)."
+    },
+    {
+      "id": "98ae0b42-d917-4ccf-95c2-3328e8b9f672",
+      "name": "GHL: list sub-accounts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4180,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://services.leadconnectorhq.com/locations/search?companyId={{ encodeURIComponent(((($('GHL: agency').first().json.body || {}).location) || {}).companyId || $('Config').first().json.GHL_COMPANY_ID) }}&skip=0&limit=1000",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Version",
+              "value": "2021-07-28"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "oAuth2Api": {
+          "id": "",
+          "name": "FF GHL OAuth"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "executeOnce": true,
+      "notes": "FF's GHL sub-accounts (name, website, phone) to link clients by themselves."
+    },
+    {
+      "id": "19426eaf-e0f8-4f1e-90f6-9c7b02f4261a",
+      "name": "Match GHL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4400,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Links clients that have no GHL sub-account yet to FF's GHL sub-accounts, by\n// themselves: same business name, same website, or same business phone. Only an\n// unambiguous match is saved (one sub-account for one client, not used by\n// another client). Output: Supabase PATCH items for \"Save GHL links\", or one\n// no-op item. Business names, websites and phones only - no family data.\nconst res = $('GHL: list sub-accounts').first().json || {};\nconst clients = $('Clients without GHL').all().map((i) => i.json).filter((c) => c && c.client_id);\nconst linked = new Set($('Linked GHL sub-accounts').all().map((i) => i.json && i.json.ghl_location_id).filter(Boolean));\nconst NOOP = [{ json: { method: 'GET', path: 'clients?select=id&limit=0', body: null, matched: 0 } }];\n\nif (!(res.statusCode >= 200 && res.statusCode < 300) || !clients.length) return NOOP;\nconst locations = ((res.body && res.body.locations) || []).filter((l) => l && l.id && !linked.has(l.id));\n\nconst STOP = new Set(['the', 'inc', 'ltd', 'llc', 'co', 'and', 'of', 'corp', 'company']);\nconst name = (s) => String(s || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').split(' ')\n  .filter((w) => w && !STOP.has(w)).join(' ');\nconst host = (s) => {\n  const m = /^(?:https?:\\/\\/)?(?:www\\.)?([^/?#:]+)/i.exec(String(s || '').trim());\n  return m ? m[1].toLowerCase() : '';\n};\nconst phone = (s) => String(s || '').replace(/\\D/g, '').slice(-10);\n\nconst out = [];\nconst used = new Set();\nfor (const c of clients) {\n  const hits = locations.filter((l) => !used.has(l.id) && (\n    (name(c.name) && name(l.name) === name(c.name))\n    || (host(c.website_url) && host(l.website) === host(c.website_url))\n    || (phone(c.phone).length === 10 && phone(l.phone) === phone(c.phone))\n  ));\n  if (hits.length !== 1) continue;\n  used.add(hits[0].id);\n  out.push({ json: {\n    method: 'PATCH',\n    path: `clients?id=eq.${c.client_id}&ghl_location_id=is.null`,\n    prefer: 'return=minimal',\n    body: { ghl_location_id: String(hits[0].id) },\n    matched: 1,\n  } });\n}\nreturn out.length ? out : NOOP;\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "bc72a3db-ce75-4504-913c-56d92cdfdc83",
+      "name": "Save GHL links",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4620,
+        200
+      ],
+      "parameters": {
+        "method": "={{ $json.method }}",
+        "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/{{ $json.path }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "={{ $json.prefer || 'return=minimal' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body ?? {}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "FF Supabase (service role)"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Links a client to its GHL sub-account when the match is unambiguous."
+    }
+  ],
+  "connections": {
+    "Schedule: daily 06:45": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Manual run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual run?": {
+      "main": [
+        [
+          {
+            "node": "Auth: read token",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get pages to check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: read token": {
+      "main": [
+        [
+          {
+            "node": "Auth: verify token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: verify token": {
+      "main": [
+        [
+          {
+            "node": "Auth: load profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: load profile": {
+      "main": [
+        [
+          {
+            "node": "Auth: check role",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: check role": {
+      "main": [
+        [
+          {
+            "node": "Auth: allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth: allowed?": {
+      "main": [
+        [
+          {
+            "node": "Respond: accepted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: denied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond: accepted": {
+      "main": [
+        [
+          {
+            "node": "Get pages to check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get pages to check": {
+      "main": [
+        [
+          {
+            "node": "Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pages": {
+      "main": [
+        [
+          {
+            "node": "Any pages?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any pages?": {
+      "main": [
+        [
+          {
+            "node": "Fetch page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Apply findings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch page": {
+      "main": [
+        [
+          {
+            "node": "Read pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read pages": {
+      "main": [
+        [
+          {
+            "node": "Save checks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save checks": {
+      "main": [
+        [
+          {
+            "node": "Apply findings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply findings": {
+      "main": [
+        [
+          {
+            "node": "Clients without GHL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clients without GHL": {
+      "main": [
+        [
+          {
+            "node": "Linked GHL sub-accounts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Linked GHL sub-accounts": {
+      "main": [
+        [
+          {
+            "node": "GHL: agency",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GHL: agency": {
+      "main": [
+        [
+          {
+            "node": "GHL: list sub-accounts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GHL: list sub-accounts": {
+      "main": [
+        [
+          {
+            "node": "Match GHL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match GHL": {
+      "main": [
+        [
+          {
+            "node": "Save GHL links",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "tags": []
+}

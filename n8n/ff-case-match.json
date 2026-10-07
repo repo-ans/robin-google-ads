@@ -2,7 +2,7 @@
   "name": "ff-case-match",
   "nodes": [
     {
-      "id": "8619fcd8-0a7e-4374-91fc-acfcbc4ecbc5",
+      "id": "646acabb-47e6-4bef-bb4d-2104e04dd708",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -22,7 +22,7 @@
       "notes": "responseMode is explicitly responseNode (reference lesson: unset means an instant 'Workflow was started'). Set allowedOrigins to the Netlify URL."
     },
     {
-      "id": "8981e564-e890-42d5-832c-1468b8e1d4c0",
+      "id": "1c47f4a8-cc3f-4a3d-95f7-7264cdd8ed23",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -36,7 +36,7 @@
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
     },
     {
-      "id": "608ee71d-cd9a-42d8-a109-c7d25fb55a52",
+      "id": "f3c9f65b-63fe-4ebc-879c-5824385e65b0",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -50,7 +50,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "78a4adb0-6636-4177-bdb5-23afcc03af3d",
+      "id": "4d4bdee9-19c6-45d7-8202-0bdf211a0072",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -86,7 +86,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "5b2958a8-82f8-4800-b5f0-8fce6fc1dd9e",
+      "id": "182ade6e-50dc-41e2-8349-003cf569a84d",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -131,7 +131,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "c452cc4d-6620-469f-9811-6c0c537ad2e2",
+      "id": "a409233b-e49b-420e-a619-5a1d9a280582",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -145,7 +145,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "bd6be1dd-3176-4b3d-9e5b-8c5d379c3dfe",
+      "id": "a05e72d5-e829-4636-9c60-e5603274de83",
       "parameters": {
         "conditions": {
           "options": {
@@ -178,7 +178,7 @@
       ]
     },
     {
-      "id": "5334fe02-3ea3-4fc5-abbf-e365144734e8",
+      "id": "1b609802-de4c-4686-8b4c-21cf0371a3a3",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -196,7 +196,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "969c885d-9ed4-4fe6-9d00-ca220b7c5b4f",
+      "id": "c8d7cb2a-fbe7-40ee-8962-2ee8b579cde5",
       "name": "Validate input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -209,7 +209,7 @@
       }
     },
     {
-      "id": "7df0c385-a2e3-437d-b5fc-b84daf500add",
+      "id": "fd76c964-2c0b-4870-8d8b-ce446a17302c",
       "name": "Validate input ok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -226,7 +226,7 @@
           },
           "conditions": [
             {
-              "id": "ee12fcd7-0ae0-4079-9a0e-58e4025559e5",
+              "id": "a06bbc30-55c8-449c-a1eb-04a8c0ba8d46",
               "leftValue": "={{ $json.valid === true }}",
               "rightValue": true,
               "operator": {
@@ -242,7 +242,7 @@
       }
     },
     {
-      "id": "12e5211a-aab2-4690-82b1-8b422c956068",
+      "id": "f2bafa50-2d20-4462-85ac-2b58631958c9",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -259,7 +259,7 @@
       }
     },
     {
-      "id": "15791081-0ddc-4c0a-aeb8-2ddf6457946e",
+      "id": "7aaa5cc7-0694-46ab-a40a-7056f439380e",
       "name": "From GHL?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -276,7 +276,7 @@
           },
           "conditions": [
             {
-              "id": "d444cd10-a2b8-4419-9169-977803a70dda",
+              "id": "d22e460e-0a12-48a2-b34f-7a530267bd70",
               "leftValue": "={{ $('Validate input').first().json.source === 'ghl' }}",
               "rightValue": true,
               "operator": {
@@ -292,7 +292,7 @@
       }
     },
     {
-      "id": "e5bf8f18-6101-4bf4-8ada-46961c8807e9",
+      "id": "1b212a3e-fefa-4820-abff-c0d348430409",
       "name": "Get client GHL",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -316,7 +316,7 @@
       "alwaysOutputData": true
     },
     {
-      "id": "36cb5b41-c7bc-44dc-a150-1a3040b84fbe",
+      "id": "d645a9a8-45db-4dc9-a036-1e42647f94e4",
       "name": "GHL: find agency",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -361,7 +361,7 @@
       "notes": "The agency (company) id of this sub-account, read with FF's GHL app. Used for the sub-account token below."
     },
     {
-      "id": "04e580c2-0b47-44f0-944c-52c366bd0ba2",
+      "id": "a96dd755-0fb3-4e2a-a0e3-3e763f6d1415",
       "name": "GHL: location token",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -420,7 +420,7 @@
       "notes": "FF GHL app (agency) -> a short-lived token for this client's sub-account. The app must be installed on the sub-account."
     },
     {
-      "id": "06664d56-1d83-42fa-8f21-7f45adda78b7",
+      "id": "c2c46402-f1c6-4241-96e3-9cee40f3cb62",
       "name": "GHL: contact fields",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -460,7 +460,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "99a092ba-ba9a-4ba3-accc-6caf7bba2f13",
+      "id": "73538182-a712-4187-9f92-a31729024f63",
       "name": "GHL: won opportunities",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -501,7 +501,7 @@
       "notes": "Won = signed. Only ids, dates and values are used from the answer."
     },
     {
-      "id": "5f4d7ddb-8880-450a-9d2c-4150feb33cf9",
+      "id": "1a1526ad-9118-4dc8-b20a-b1cc77dc1650",
       "name": "GHL: won in month",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -514,7 +514,7 @@
       }
     },
     {
-      "id": "59e41dd4-e589-41b6-86de-28e001522855",
+      "id": "fb257f9f-43db-4cc9-8695-2a0a1fe2b879",
       "name": "Won cases?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -531,7 +531,7 @@
           },
           "conditions": [
             {
-              "id": "980ae000-f640-47c0-aae6-01d00c7ec3b3",
+              "id": "9f242dad-9176-4421-a9f1-928472db4564",
               "leftValue": "={{ !$json.none }}",
               "rightValue": true,
               "operator": {
@@ -547,7 +547,7 @@
       }
     },
     {
-      "id": "a2f906c4-3c0d-4358-8b5a-04b5cc3be216",
+      "id": "22b720e5-2b78-4b8a-9f2f-8a7e5b1efe74",
       "name": "GHL: get contacts",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -594,7 +594,7 @@
       "notes": "Phone, email and click ids of each signed family - kept only in this execution (no execution data is saved)."
     },
     {
-      "id": "90efa61e-fc1b-4537-991f-fc8cc626f80d",
+      "id": "6439f1bc-5c90-4c1c-8f32-d6bfdc597267",
       "name": "GHL: build cases",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -608,7 +608,7 @@
       "executeOnce": true
     },
     {
-      "id": "70d54edf-13e0-440a-9a62-58088081ba13",
+      "id": "db7122d1-78fe-451f-b532-f4eb90ebbac4",
       "name": "Get case match context",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -634,7 +634,7 @@
       }
     },
     {
-      "id": "4d2639da-b1bc-4a33-a71d-241b436d03cd",
+      "id": "987e70af-ae8a-4e21-b7b9-d39974ee0499",
       "name": "Get earlier uploads",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -659,7 +659,7 @@
       "executeOnce": true
     },
     {
-      "id": "dc66f4a8-9429-4279-8119-c2d26d7c8231",
+      "id": "c0cf4c7a-9f79-4797-80bf-4bebaabab893",
       "name": "Plan uploads",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -673,7 +673,7 @@
       "executeOnce": true
     },
     {
-      "id": "27453926-f1c5-4089-b2ce-7b1807d835d2",
+      "id": "3f6b3d39-044c-4664-9bdf-3339fc894097",
       "name": "Allowed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -690,7 +690,7 @@
           },
           "conditions": [
             {
-              "id": "9928735d-d3b6-4205-a09b-2bf977110907",
+              "id": "c2b6b4b8-02cd-4d57-b5b1-15a35e232c33",
               "leftValue": "={{ $json.ok === true }}",
               "rightValue": true,
               "operator": {
@@ -706,7 +706,7 @@
       }
     },
     {
-      "id": "707bef6c-e326-4dfc-92c8-889242f4a70e",
+      "id": "bc4cb310-56bf-418d-8ca6-9d3ad4366e00",
       "name": "Get Google Ads secrets",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -734,7 +734,7 @@
       "notes": "Developer token, OAuth client id/secret, refresh token and MCC id, entered by Rob on the dashboard Settings page (stored in Supabase private.google_ads_secrets - never readable by the browser)."
     },
     {
-      "id": "5603de2e-33dd-4488-bc28-310a48b54e7a",
+      "id": "f274ee07-3f7a-46cf-b521-042ca15163d2",
       "name": "Refresh Google token",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -778,7 +778,7 @@
       "notes": "OAuth refresh, same as the reference. Values from 'Get Google Ads secrets'. Test: Execute step - the output must contain access_token."
     },
     {
-      "id": "0e33cda4-053c-4801-a300-4a3b8bfe20eb",
+      "id": "3e08e46a-9942-461c-94ab-5a998d0278b8",
       "name": "Upload requests",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -792,7 +792,7 @@
       "executeOnce": true
     },
     {
-      "id": "c811b41a-4953-43fd-a88d-e7cd8551d53e",
+      "id": "634d62a2-90bc-405b-895f-5a6a038bd07d",
       "name": "Check upload",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -822,7 +822,7 @@
       "notes": "validateOnly: Google checks every case without recording anything. One call per upload kind (click, call)."
     },
     {
-      "id": "5fa72c9b-7f59-4be0-8fca-b923a3461978",
+      "id": "63c266bf-1e23-457c-996e-7dcd82586b4e",
       "name": "Check validation",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -835,7 +835,7 @@
       }
     },
     {
-      "id": "f0363db2-364c-4185-9e1a-be9055857044",
+      "id": "f2913884-4e55-4d1e-a8a0-d50fef9f5a13",
       "name": "Upload now?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -852,7 +852,7 @@
           },
           "conditions": [
             {
-              "id": "74e4f366-86f8-44ed-8391-b8cc40527fd3",
+              "id": "43e60695-28e7-4129-94a4-16bb85af593d",
               "leftValue": "={{ $json.go === true }}",
               "rightValue": true,
               "operator": {
@@ -868,7 +868,7 @@
       }
     },
     {
-      "id": "16b9c107-a3a9-406c-bfa8-da922fda127c",
+      "id": "b4ae3f4a-8016-41af-b44b-eb937f23baf0",
       "name": "Real upload requests",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -882,7 +882,7 @@
       "executeOnce": true
     },
     {
-      "id": "7451cba7-abd5-46f8-9e91-76cd753851a3",
+      "id": "194b16a9-123e-4d80-b698-e4c9a9a14d95",
       "name": "Upload conversions",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -912,7 +912,7 @@
       "notes": "The real upload. Only reached for action upload (Rob), after the guards and a clean validateOnly call."
     },
     {
-      "id": "7c57b062-7a21-4db9-a042-1820cc47a99b",
+      "id": "f1652895-2fcc-4cd9-90d5-073aade4bd5b",
       "name": "Case match records",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -926,7 +926,7 @@
       "executeOnce": true
     },
     {
-      "id": "2c9d2fc0-f6af-448a-90a4-8629c62f9b2d",
+      "id": "e6c3ad32-1ae1-4c8e-bd63-8653b71b023e",
       "name": "Save records",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -970,7 +970,7 @@
       "notes": "case_match_runs (counts only) and write_log (summaries only)."
     },
     {
-      "id": "5ab647f4-af06-4723-93fc-98ce85682274",
+      "id": "495d2374-9080-4524-bf10-f012358c9ea6",
       "name": "Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,

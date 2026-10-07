@@ -80,7 +80,8 @@ In every workflow:
 | ff-send-reply | Send the edited reply | staff |
 | ff-apply-campaign-action | Confirm & Apply (budget / pause / resume), add negative keywords (Search Terms tab), set up call tracking and the blocked-words list (client page) | Rob |
 | ff-case-match | Monthly case match: check (staff) or upload (Rob) signed cases as offline conversions; counts only | staff / Rob |
-| ff-search-triage | Monday 07:30: sorts new search terms into keep / block / ask Rob (rules, then AI). Also "Sort new searches" on the client page | schedule; staff |
+| ff-website-check | Daily 06:45, after the sync: what is on each client's public pages (our script, Google tag, forms, online payment, platform). Also "Check website" on the client page | schedule; staff |
+| ff-search-triage | Daily 07:30: sorts new search terms into keep / block / ask Rob (rules, then AI). Also "Sort new searches" on the client page | schedule; staff |
 | ff-gaql | One read-only Google Ads query (Claude Code: `node scripts/ff.mjs gaql`) | staff |
 | ff-build-campaign | Drafts (staff), build PAUSED campaign (Rob) | staff / Rob |
 | ff-delete-campaign | Remove a campaign | Rob |

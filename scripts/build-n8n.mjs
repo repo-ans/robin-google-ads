@@ -1099,9 +1099,9 @@ function buildSearchTriage() {
   const W = "ff-search-triage";
   const wf = new Workflow(W);
   wf.add({
-    name: "Schedule: weekly Monday 07:30", type: "n8n-nodes-base.scheduleTrigger", typeVersion: 1.2, position: P(0, 0),
-    parameters: { rule: { interval: [{ field: "weeks", triggerAtDay: [1], triggerAtHour: 7, triggerAtMinute: 30 }] } },
-    notes: "Monday 07:30, after the 06:00 sync, for the last 7 days. Workflow settings > Timezone: FF's time zone.",
+    name: "Schedule: daily 07:30", type: "n8n-nodes-base.scheduleTrigger", typeVersion: 1.2, position: P(0, 0),
+    parameters: { rule: { interval: [{ triggerAtHour: 7, triggerAtMinute: 30 }] } },
+    notes: "Every day at 07:30, after the 06:00 sync: new search terms of the last 7 days (a decision is never changed once made). Workflow settings > Timezone: FF's time zone.",
   });
   wf.add({
     name: "Webhook", type: "n8n-nodes-base.webhook", typeVersion: 2, position: P(0, 2), webhookId: "ff-search-triage",
@@ -1158,7 +1158,7 @@ Answer every number exactly once. theme is one or two plain words (for example o
     { notes: "ignore-duplicates: a decision already made (by a person or earlier) is never overwritten." },
     { prefer: "resolution=ignore-duplicates,return=minimal", body: "={{ JSON.stringify($json.rows) }}", full: true, neverError: true });
 
-  wf.chain("Schedule: weekly Monday 07:30", "Config");
+  wf.chain("Schedule: daily 07:30", "Config");
   wf.chain("Webhook", "Config", "Manual run?");
   wf.connect("Manual run?", "Auth: read token", 0);
   wf.connect("Manual run?", "Get blocked words", 1);
@@ -1170,6 +1170,86 @@ Answer every number exactly once. theme is one or two plain words (for example o
   wf.connect("Anything for the AI?", "Save rows", 1);
   wf.chain("Sort (AI Agent)", "Save rows", "Anything to save?");
   wf.connect("Anything to save?", "Save triage", 0);
+  return wf.toJSON();
+}
+
+
+// ================================================================== ff-website-check
+// Tasks 3 and 7 for every client: reads the client's public pages (website and
+// ad landing pages) and records what is there - our script and its settings, the
+// Google tag, a GHL / lead form, online checkout, the site platform. No login to
+// any website; only yes/no answers, tag ids and a count are kept.
+function buildWebsiteCheck() {
+  const W = "ff-website-check";
+  const wf = new Workflow(W);
+  wf.add({
+    name: "Schedule: daily 06:45", type: "n8n-nodes-base.scheduleTrigger", typeVersion: 1.2, position: P(0, 0),
+    parameters: { rule: { interval: [{ triggerAtHour: 6, triggerAtMinute: 45 }] } },
+    notes: "Every client, every day after the 06:00 sync. Workflow settings > Timezone: FF's time zone.",
+  });
+  wf.add({
+    name: "Webhook", type: "n8n-nodes-base.webhook", typeVersion: 2, position: P(0, 2), webhookId: "ff-website-check",
+    parameters: { httpMethod: "POST", path: "ff/website-check", responseMode: "responseNode", options: { allowedOrigins: "http://localhost:5173" } },
+    notes: "\"Check website\" on the client page. Answers 202 at once; the check carries on.",
+  });
+  wf.code("Config", W, "config.js", P(1, 1), { notes: "Set SUPABASE_URL and SUPABASE_ANON_KEY after import. Pick the FF GHL OAuth credential on the GHL nodes." });
+  wf.if("Manual run?", "$('Config').first().json.trigger === 'manual'", P(2, 1));
+  AUTH_NAMES.forEach((name, i) => {
+    const copy = JSON.parse(JSON.stringify(whoami.nodes.find((n) => n.name === name)));
+    delete copy.id;
+    copy.position = name === "Respond: denied" ? P(7, 3) : P(3 + i, 2);
+    wf.add(copy);
+  });
+  wf.add({
+    name: "Respond: accepted", type: "n8n-nodes-base.respondToWebhook", typeVersion: 1.1, position: P(8, 2),
+    parameters: {
+      respondWith: "json",
+      responseBody: "={{ JSON.stringify({ status: 'started', message: 'Checking. The client page updates in a minute.' }) }}",
+      options: { responseCode: 202 },
+    },
+  });
+  wf.sb("Get pages to check", P(9, 1), "POST", "rpc/ff_website_targets", { alwaysOutputData: true, executeOnce: true },
+    { body: "={{ JSON.stringify({ p_client_id: $('Config').first().json.only_client_id }) }}" });
+  wf.code("Pages", W, "pages.js", P(10, 1), { executeOnce: true });
+  wf.if("Any pages?", "!$json.none", P(11, 1));
+  wf.http("Fetch page", P(12, 0), {
+    method: "GET", url: "={{ $json.url }}",
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; FF-website-check/1.0)", Accept: "text/html" },
+    full: true, neverError: true, text: true, batch: 400, timeout: 20000,
+  }, { onError: "continueRegularOutput", notes: "Public page only, no login. One request at a time." });
+  wf.code("Read pages", W, "read-pages.js", P(13, 0), { executeOnce: true });
+  wf.sb("Save checks", P(14, 0), "POST", "website_checks?on_conflict=client_id,url", {},
+    { prefer: "resolution=merge-duplicates,return=minimal", body: "={{ JSON.stringify($json.rows) }}", full: true, neverError: true });
+
+  // What the system can fill in by itself (no buttons): client type from online
+  // payment, website from the ads, phone from the call asset, GHL sub-account.
+  wf.sb("Apply findings", P(15, 1), "POST", "rpc/ff_apply_website_findings",
+    { executeOnce: true, notes: "Client type (online payment found = online cremation, unless set by hand), website and phone when empty." },
+    { body: "={{ JSON.stringify({ p_client_id: $('Config').first().json.only_client_id }) }}", full: true, neverError: true });
+  wf.sb("Clients without GHL", P(16, 1), "POST", "rpc/ff_clients_without_ghl", { alwaysOutputData: true, executeOnce: true }, { body: "={}" });
+  wf.sb("Linked GHL sub-accounts", P(17, 1), "GET", "clients?select=ghl_location_id&ghl_location_id=not.is.null&order=updated_at.desc", { alwaysOutputData: true, executeOnce: true });
+  wf.http("GHL: agency", P(18, 1), {
+    method: "GET", cred: "ghl", headers: GHL_HEADERS, full: true, neverError: true,
+    url: `=${GHL_API}/locations/{{ $('Linked GHL sub-accounts').first().json.ghl_location_id || 'none' }}`,
+  }, { onError: "continueRegularOutput", executeOnce: true, notes: "FF's GHL agency id, read from a client already linked (Config GHL_COMPANY_ID is the fallback)." });
+  wf.http("GHL: list sub-accounts", P(19, 1), {
+    method: "GET", cred: "ghl", headers: GHL_HEADERS, full: true, neverError: true,
+    url: `=${GHL_API}/locations/search?companyId={{ encodeURIComponent(((($('GHL: agency').first().json.body || {}).location) || {}).companyId || $('Config').first().json.GHL_COMPANY_ID) }}&skip=0&limit=1000`,
+  }, { onError: "continueRegularOutput", executeOnce: true, notes: "FF's GHL sub-accounts (name, website, phone) to link clients by themselves." });
+  wf.code("Match GHL", W, "match-ghl.js", P(20, 1), { executeOnce: true });
+  wf.sbGeneric("Save GHL links", P(21, 1), "rest/v1/", "Links a client to its GHL sub-account when the match is unambiguous.");
+
+  wf.chain("Schedule: daily 06:45", "Config");
+  wf.chain("Webhook", "Config", "Manual run?");
+  wf.connect("Manual run?", "Auth: read token", 0);
+  wf.connect("Manual run?", "Get pages to check", 1);
+  wf.chain(...AUTH_NAMES.slice(0, 5));
+  wf.connect("Auth: allowed?", "Respond: accepted", 0);
+  wf.connect("Auth: allowed?", "Respond: denied", 1);
+  wf.chain("Respond: accepted", "Get pages to check", "Pages", "Any pages?");
+  wf.connect("Any pages?", "Fetch page", 0);
+  wf.connect("Any pages?", "Apply findings", 1);
+  wf.chain("Fetch page", "Read pages", "Save checks", "Apply findings", "Clients without GHL", "Linked GHL sub-accounts", "GHL: agency", "GHL: list sub-accounts", "Match GHL", "Save GHL links");
   return wf.toJSON();
 }
 
@@ -1420,6 +1500,8 @@ function buildWeeklyReport() {
   wf.sb("Get week rows", P(13, 0), "GET",
     "weekly_stats?week_start=eq.{{ $('Config').first().json.week_start }}&select=*,clients(name,process)&order=cost_micros.desc",
     { alwaysOutputData: true, executeOnce: true });
+  wf.sb("Get last month cases", P(13, -1), "POST", "rpc/ff_month_cases", { alwaysOutputData: true, executeOnce: true, notes: "Last month's signed families, matches and spend per client - used in the note on the first Monday of the month." },
+    { body: "={{ JSON.stringify({ p_month: (() => { const d = new Date($('Config').first().json.week_end + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); d.setUTCMonth(d.getUTCMonth() - 1, 1); return d.toISOString().slice(0, 10); })() }) }}" });
   wf.code("Build Slack note", W, "build-slack.js", P(14, 0), { executeOnce: true });
   wf.if("Send Slack note?", "!$json.skip", P(15, 0));
   wf.slack("Send Slack note", P(16, 0), "={{ $json.text }}");
@@ -1448,7 +1530,7 @@ function buildWeeklyReport() {
   wf.connect("Sheet written?", "Mark sheet written", 0);
   wf.connect("Sheet written?", "Loop over clients", 1);
   wf.connect("Mark sheet written", "Loop over clients");
-  wf.chain("Get week rows", "Build Slack note", "Send Slack note?");
+  wf.chain("Get week rows", "Get last month cases", "Build Slack note", "Send Slack note?");
   wf.connect("Send Slack note?", "Send Slack note", 0);
   // The GHL search answer can contain a contact: keep no execution data at all.
   return wf.toJSON({ saveDataErrorExecution: "none", saveManualExecutions: false });
@@ -1518,6 +1600,7 @@ const builders = {
   "ff-case-match": buildCaseMatch,
   "ff-gaql": buildGaql,
   "ff-search-triage": buildSearchTriage,
+  "ff-website-check": buildWebsiteCheck,
   "ff-build-campaign": buildBuild,
   "ff-client-admin": buildClientAdmin,
   "ff-review-actions": buildReview,
