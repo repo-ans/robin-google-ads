@@ -2,7 +2,7 @@
   "name": "ff-weekly-report",
   "nodes": [
     {
-      "id": "e838c2e7-59cb-42e5-9094-2d6b7c77c422",
+      "id": "a55b6bf8-7189-481f-b641-9834ce10a35d",
       "name": "Schedule: weekly Monday 08:00",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
@@ -26,7 +26,7 @@
       "notes": "Monday 08:00, after the 06:00 sync, for last week (Monday to Sunday). Workflow settings > Timezone: FF's time zone."
     },
     {
-      "id": "0112336b-d64e-426d-bf03-d2023ed96a7e",
+      "id": "8694fd27-2afe-4e15-bfc4-c66cc439b683",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -46,7 +46,7 @@
       "notes": "Run the weekly report from the dashboard. Answers 202 at once; the report carries on. No Slack note unless the body has slack: true."
     },
     {
-      "id": "0b8ebab9-3618-4fed-83ce-feddf3b01a60",
+      "id": "109a4ffc-d492-4166-ba5c-b3317d6f9460",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -60,7 +60,7 @@
       "notes": "Set SUPABASE_URL, SUPABASE_ANON_KEY, SLACK_CHANNEL and DASHBOARD_URL after import."
     },
     {
-      "id": "7df6bc1b-b4da-4a54-a78f-91b2f68e08e2",
+      "id": "8996b220-e852-47cb-a71e-d43ebc400253",
       "name": "Manual run?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -77,7 +77,7 @@
           },
           "conditions": [
             {
-              "id": "e50b8a17-c4dd-4d98-b796-6d84ecb651e9",
+              "id": "23023876-e65e-4844-b169-b6b01c05c150",
               "leftValue": "={{ $('Config').first().json.trigger === 'manual' }}",
               "rightValue": true,
               "operator": {
@@ -93,7 +93,7 @@
       }
     },
     {
-      "id": "9eee4fc7-36b1-4862-a113-31adbc327deb",
+      "id": "0a7b47ae-0c4b-4368-915c-9716a20575a1",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -107,7 +107,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "81fd4da8-7020-4622-942a-2b493ea2fa45",
+      "id": "2491c0a8-53e8-4e68-84e8-280173ff0791",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -143,7 +143,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "fab14f74-6cee-438a-882a-37e786e27c54",
+      "id": "adb344bc-26df-4fc2-b669-fc759bd9d2ef",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -188,7 +188,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "a2f90ca0-6cb4-4f44-b5a3-148735912789",
+      "id": "31d501c6-55ad-4b99-8d31-c2185a5be73f",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -202,7 +202,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "4198d965-a759-4fd3-a146-85db45ec7875",
+      "id": "7514cdb1-ff7d-4bc5-a540-4b8960308019",
       "parameters": {
         "conditions": {
           "options": {
@@ -235,7 +235,7 @@
       ]
     },
     {
-      "id": "e8b95d2e-7416-4df6-8cbf-ea9b370e908a",
+      "id": "47736442-5867-4dbe-8497-fcf1326bc7b5",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -253,7 +253,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "da2b59f1-48be-4739-a9e7-95c5f0b5e388",
+      "id": "6ba0475f-9963-4239-a2ff-2fd20c10ce78",
       "name": "Respond: accepted",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -270,7 +270,7 @@
       }
     },
     {
-      "id": "703e4abc-961b-490b-ab30-6dd55c6672e8",
+      "id": "cdaa24d1-60db-48b7-95ca-c8d4e1b71a43",
       "name": "Get report numbers",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -298,7 +298,7 @@
       "executeOnce": true
     },
     {
-      "id": "c73192a8-d256-4883-a230-062a95ba1987",
+      "id": "26cf5fc4-8c65-498b-a288-8e779248bfe0",
       "name": "Prepare clients",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -311,7 +311,7 @@
       }
     },
     {
-      "id": "aa003053-136a-4572-b177-c6aa46bd3fa8",
+      "id": "150042db-0027-4a2e-b6e7-415fbf3f5481",
       "name": "Any clients?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -328,7 +328,7 @@
           },
           "conditions": [
             {
-              "id": "c2de7111-1363-494d-a9dc-03260f0c702b",
+              "id": "d00b8416-31b5-44c3-b5b7-ef94ae7648ae",
               "leftValue": "={{ !$json.none }}",
               "rightValue": true,
               "operator": {
@@ -344,7 +344,7 @@
       }
     },
     {
-      "id": "383e999e-3a57-4db3-a6ec-a8b4713a7e18",
+      "id": "16cd1013-d4e6-4c03-ac55-c62f03fcb074",
       "name": "Loop over clients",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
@@ -359,7 +359,7 @@
       "notes": "One client per pass, so $('Loop over clients').first() is always the current client. One client failing does not stop the others."
     },
     {
-      "id": "e74ad0cc-7252-4483-bd3f-04f5bd85b8e9",
+      "id": "fb739f56-712a-4c69-add4-8947eab722dc",
       "name": "GHL set up?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -376,7 +376,7 @@
           },
           "conditions": [
             {
-              "id": "8bd28436-09a9-46b1-ba35-3520e4c51017",
+              "id": "b2dfebec-b364-416c-90f1-00fb55ca5572",
               "leftValue": "={{ Boolean($json.ghl_location_id) }}",
               "rightValue": true,
               "operator": {
@@ -392,7 +392,7 @@
       }
     },
     {
-      "id": "8c02c203-c432-4d16-8a8c-0756110ab8e7",
+      "id": "08767a05-5643-4c4a-b69b-b1e55bde46d9",
       "name": "GHL: find agency",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -437,7 +437,7 @@
       "notes": "The agency (company) id of this sub-account, read with FF's GHL app. Used for the sub-account token below."
     },
     {
-      "id": "5b000511-4f07-4e45-b975-06a02f6738f7",
+      "id": "7d94bcea-6912-4ef0-9a2f-ffbbe0fdedd3",
       "name": "GHL: location token",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -496,7 +496,7 @@
       "notes": "FF GHL app (agency) -> a short-lived token for this client's sub-account. The app must be installed on the sub-account."
     },
     {
-      "id": "0a1949eb-bf8d-4bcd-83f1-713abc95109e",
+      "id": "db7bd977-ab85-4f1a-bb1f-ce49750f6c73",
       "name": "GHL: count Google Ads leads",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -540,7 +540,7 @@
       "notes": "Only the total is used. The answer can hold one contact, so this workflow keeps no execution data (hard rule 4)."
     },
     {
-      "id": "bddec078-3236-442b-8bc7-da5fa9083a30",
+      "id": "42717f13-10b8-4b34-b18c-e9f2d14c1a44",
       "name": "Build client report",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -553,7 +553,7 @@
       }
     },
     {
-      "id": "f07516f7-d7cb-4aa5-a086-3e7baba183c9",
+      "id": "d21dcf43-f18d-484f-a137-763cbcc7ac8b",
       "name": "Save weekly stats",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -596,7 +596,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "c53bd6fc-c0f5-4ad2-a6d7-15eeaa5c9c40",
+      "id": "f6c3aadd-70aa-4fce-a4ae-4f68e2599550",
       "name": "Save tracking health",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -639,7 +639,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "c24b52cc-4733-4f22-8e05-2f1637b62cd3",
+      "id": "15d4aa38-a51b-436d-8039-15e8987a4773",
       "name": "Google Sheet set?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -656,7 +656,7 @@
           },
           "conditions": [
             {
-              "id": "12b4935c-a1b8-478f-9513-d02b06a4823f",
+              "id": "2d7eb67d-50f4-4e1e-9a25-7015be55b08a",
               "leftValue": "={{ Boolean($('Build client report').first().json.google_sheet_id) }}",
               "rightValue": true,
               "operator": {
@@ -672,7 +672,7 @@
       }
     },
     {
-      "id": "8348f1b6-c734-4793-81ab-663093c1fd18",
+      "id": "f2d21d56-7e22-4ad8-a27b-104eb743a3c0",
       "name": "Sheet row",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -685,7 +685,7 @@
       }
     },
     {
-      "id": "0d5dee33-4135-4cc9-a8c4-615ad5fe43f1",
+      "id": "1223283d-b390-46fe-861c-d4301fa151ef",
       "name": "Write Google Sheet",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
@@ -725,7 +725,7 @@
       "notes": "One row per week in the client's Sheet (row 1 = the column names, see README). Matches on Week, so a re-run updates the row instead of adding another."
     },
     {
-      "id": "ad63db55-c844-4923-b167-786a0ee8b4cc",
+      "id": "d34afabb-5865-43d3-86f0-9a09dee1b6d6",
       "name": "Sheet written?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -742,7 +742,7 @@
           },
           "conditions": [
             {
-              "id": "5670cceb-6a63-4717-8d40-019623bb6b5e",
+              "id": "5f96530f-d7bf-49ea-bfbd-197d6bfac15e",
               "leftValue": "={{ !$json.error }}",
               "rightValue": true,
               "operator": {
@@ -758,7 +758,7 @@
       }
     },
     {
-      "id": "6b64767f-972a-4150-b633-49a86fade142",
+      "id": "761d2529-eabb-44e0-8e98-16cf2d7b91a4",
       "name": "Mark sheet written",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -801,7 +801,7 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "8cef139c-d81b-4c3d-b0f3-3e2fda8691af",
+      "id": "0bd34eb3-4ba7-46c9-8713-8a3db014ab71",
       "name": "Get week rows",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -826,7 +826,7 @@
       "executeOnce": true
     },
     {
-      "id": "5f2aa592-1ee5-4a42-90d3-d6edd5bd3042",
+      "id": "ee6b6b13-ba58-4b45-a41e-49162833a370",
       "name": "Get last month cases",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -855,7 +855,7 @@
       "notes": "Last month's signed families, matches and spend per client - used in the note on the first Monday of the month."
     },
     {
-      "id": "e35bb5d8-c9d7-48f5-a9b1-cacbd07de6da",
+      "id": "fb9480f2-cec4-4d76-bed7-cc034e8320f9",
       "name": "Build Slack note",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -869,7 +869,7 @@
       "executeOnce": true
     },
     {
-      "id": "e65508ce-172b-4096-a70a-08859bd618bf",
+      "id": "e1e0d33a-7030-4d94-b799-562b07c4cdef",
       "name": "Send Slack note?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -886,7 +886,7 @@
           },
           "conditions": [
             {
-              "id": "e98ea142-ee2b-449c-a2cd-b8a305b58b6d",
+              "id": "c97a1094-4da6-4833-b867-aa07ebc3837f",
               "leftValue": "={{ !$json.skip }}",
               "rightValue": true,
               "operator": {
@@ -902,7 +902,7 @@
       }
     },
     {
-      "id": "37852a12-b239-4dc6-940d-e5f43d1da787",
+      "id": "9c1072ae-3870-4a2f-9092-963243e7b358",
       "name": "Send Slack note",
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.2,

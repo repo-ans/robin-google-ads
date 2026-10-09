@@ -1263,4 +1263,13 @@ await test("GHL auto-link: name, website or phone; only unambiguous matches; nev
   assert.equal(none[0].json.matched, 0);
 });
 
+await test("blocked-words list: no own name when a brand campaign runs, no competitor names when a competitor campaign runs", async () => {
+  const ctx = neglistCtx({ campaigns: [{ id: "10", name: "Brand - Local", linked: false }, { id: "11", name: "Competitors - Local", linked: false }, { id: "12", name: "Cremation - Local", linked: false }] });
+  const [out] = await run("ff-apply-campaign-action/plan.js", { input: [item(ctx)], nodes: neglistNodes() });
+  const words = out.json.mutate_body.mutateOperations.filter((o) => o.sharedCriterionOperation).map((o) => o.sharedCriterionOperation.create.keyword.text);
+  assert.ok(!words.includes("pacific coast cremation"), "own name kept off the shared list");
+  assert.ok(!words.includes("smith funeral home"), "competitor names kept off the shared list");
+  assert.ok(words.includes("obituary"));
+});
+
 console.log(`\n${passed} passed${process.exitCode ? ", some failed" : ""}`);

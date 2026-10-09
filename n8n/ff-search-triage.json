@@ -2,7 +2,7 @@
   "name": "ff-search-triage",
   "nodes": [
     {
-      "id": "d075370e-5f2d-4e37-be02-8e9e475c68a5",
+      "id": "67c8ac1f-dcc3-45c9-984c-fde05d8b71a2",
       "name": "Schedule: daily 07:30",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
@@ -23,7 +23,7 @@
       "notes": "Every day at 07:30, after the 06:00 sync: new search terms of the last 7 days (a decision is never changed once made). Workflow settings > Timezone: FF's time zone."
     },
     {
-      "id": "604082ee-6291-467e-b796-0a0681a10028",
+      "id": "2539be96-7102-47af-909a-f59032bc50dd",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -43,7 +43,7 @@
       "notes": "\"Sort new searches\" on the dashboard. Answers 202 at once; the sorting carries on."
     },
     {
-      "id": "5e07beda-d73c-4414-99cc-bad37cf7bc92",
+      "id": "0de7b286-a2e2-49ae-9775-402f4d7a1950",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -57,7 +57,7 @@
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import."
     },
     {
-      "id": "8a432e30-a68e-440a-8103-a7fbafaf0d5d",
+      "id": "db6cf7ff-e3e6-4111-95c3-9dd82290cfe6",
       "name": "Manual run?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -74,7 +74,7 @@
           },
           "conditions": [
             {
-              "id": "683052cf-7258-4276-ba2b-6f270fc14c3f",
+              "id": "7e661cc0-0dce-4b8f-b56b-cf82713e9055",
               "leftValue": "={{ $('Config').first().json.trigger === 'manual' }}",
               "rightValue": true,
               "operator": {
@@ -90,7 +90,7 @@
       }
     },
     {
-      "id": "00dd9185-1c4e-4e25-a517-e780ccc83f3a",
+      "id": "beb9a9e2-f0d7-4a06-b9e7-f990cce3f6b5",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -104,7 +104,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "312ffc6a-29de-46fb-ae0a-7b67466dee34",
+      "id": "6e840d78-f7a2-46e7-a8e1-ee0d62f66671",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -140,7 +140,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "1c31f2f5-599f-4614-961a-97a4577221b7",
+      "id": "bf69231a-a3ed-48ef-b571-7664f35caf17",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -185,7 +185,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "728581d4-a95b-4ef1-a409-1c7a2d166adf",
+      "id": "78c89196-88fb-4283-b312-0e0d48d04ff8",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -199,7 +199,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "075c98ba-8b8e-4dcc-8baa-efba051d831b",
+      "id": "1b9481d6-7cce-439f-be3d-3be31bd9134b",
       "parameters": {
         "conditions": {
           "options": {
@@ -232,7 +232,7 @@
       ]
     },
     {
-      "id": "bfca5ba1-85ac-4e91-9c18-1aa8a072dd20",
+      "id": "71c5e3c9-d22e-4669-8602-17c691543b1c",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -250,7 +250,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "946dc2bf-ed48-4ffd-86dc-812023860c9b",
+      "id": "e26a4043-b404-49c5-9fa7-e01f2e1be3ac",
       "name": "Respond: accepted",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -267,7 +267,7 @@
       }
     },
     {
-      "id": "0e7779c3-6af7-4a4b-96b5-5cc8bdfa2dd9",
+      "id": "5e3bfa06-2e7d-4f4d-86f1-6cb517e8e267",
       "name": "Get blocked words",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -292,7 +292,7 @@
       "executeOnce": true
     },
     {
-      "id": "2555d7e9-6f9b-4a03-b951-69a366ab21a9",
+      "id": "1ddc97b8-8a9e-4443-9a7c-e1941e50cc36",
       "name": "Get candidates",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -320,7 +320,7 @@
       "executeOnce": true
     },
     {
-      "id": "7c21f10a-f025-48ad-9ce1-ce52b5e5a8b4",
+      "id": "bc4a8cf7-4a6a-4dda-ab84-fe3aed3e8269",
       "name": "Rule triage",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -334,7 +334,7 @@
       "executeOnce": true
     },
     {
-      "id": "cb6bf125-bf05-4d36-88b1-707fa850a820",
+      "id": "487afa29-9865-47b1-84e4-73f68336caed",
       "name": "AI batches",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -348,7 +348,7 @@
       "executeOnce": true
     },
     {
-      "id": "264c6b06-5771-4cd1-816e-45c0d68e43c9",
+      "id": "01e90aef-855c-42ff-83a2-974e56f95735",
       "name": "Anything for the AI?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -365,7 +365,7 @@
           },
           "conditions": [
             {
-              "id": "847b7d41-4dae-412f-b31a-0a5ee7ec36e1",
+              "id": "28203d35-6e82-4e8c-afb6-bbae07253b43",
               "leftValue": "={{ !$json.skip }}",
               "rightValue": true,
               "operator": {
@@ -381,7 +381,7 @@
       }
     },
     {
-      "id": "2b77c7c9-6b11-42b7-be31-60e76569d0b3",
+      "id": "788acc39-382e-47d4-8e86-f1c23d0b1830",
       "name": "Sort (AI Agent)",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 1.7,
@@ -401,7 +401,7 @@
       "notes": "onError continueRegularOutput: a malformed model output must not stop the workflow (reference lesson). The next Code node treats it as no answer."
     },
     {
-      "id": "ffb7ae59-7713-4faa-8d6a-45e9f5019f76",
+      "id": "2165a454-3f0d-4269-8f8c-b0256d0e9781",
       "name": "Sort (AI Agent) - OpenAI model",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.3,
@@ -425,7 +425,7 @@
       }
     },
     {
-      "id": "e7846aea-a351-435a-9e51-0cef20a52dd2",
+      "id": "cd7e6ce3-b906-4964-86ac-50c7033be1b1",
       "name": "Sort (AI Agent) - output format",
       "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
       "typeVersion": 1.2,
@@ -439,7 +439,7 @@
       }
     },
     {
-      "id": "687d0817-7716-49ea-b6bc-041a1764bc9c",
+      "id": "de3f4a1c-425f-40a2-896d-bbf67938f694",
       "name": "Save rows",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -453,7 +453,7 @@
       "executeOnce": true
     },
     {
-      "id": "10f0f744-3ed6-449b-8c61-85e4805aec5c",
+      "id": "6b0e76d9-4788-4ccf-9d5d-1eb2d7802d87",
       "name": "Anything to save?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -470,7 +470,7 @@
           },
           "conditions": [
             {
-              "id": "b4e7fae2-16c5-497f-b804-35a2e5279a03",
+              "id": "4fea2f9e-faf9-405a-9ef7-e9a33a9eab6b",
               "leftValue": "={{ $json.total > 0 }}",
               "rightValue": true,
               "operator": {
@@ -486,7 +486,7 @@
       }
     },
     {
-      "id": "cacb19d2-3e39-426e-824f-580d3ff41a4b",
+      "id": "75caa327-e023-4b62-a163-f894bdee0e81",
       "name": "Save triage",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,

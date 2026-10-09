@@ -76,10 +76,15 @@ if (v.source === 'neglist') {
     }
   };
   for (const u of n.universal || []) add(u.text, u.match_type);
-  // Robin: block the client's own name and competitors' names too (phrase match).
+  // Robin: block the client's own name and competitors' names too (phrase match) -
+  // but never when the account runs a brand or competitor campaign: the shared list
+  // goes on every search campaign, and it would switch those campaigns off.
+  const campaignNames = (n.campaigns || []).map((k) => String(k.name || '').toLowerCase());
+  const hasBrandCampaign = campaignNames.some((x) => /brand/.test(x));
+  const hasCompetitorCampaign = campaignNames.some((x) => /competitor|conquest/.test(x));
   const brand = (n.own_brand_terms || []).length ? n.own_brand_terms : [n.client_name];
-  for (const b of brand) add(b, 'PHRASE');
-  for (const c of n.competitor_terms || []) add(c, 'PHRASE');
+  if (!hasBrandCampaign) for (const b of brand) add(b, 'PHRASE');
+  if (!hasCompetitorCampaign) for (const c of n.competitor_terms || []) add(c, 'PHRASE');
 
   const have = new Set(n.list_terms || []);
   const missing = words.filter((w) => !have.has(`${w.text}|${w.match_type}`));

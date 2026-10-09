@@ -2,7 +2,7 @@
   "name": "ff-website-check",
   "nodes": [
     {
-      "id": "1767f963-bb05-4f40-abc5-3255de1c2932",
+      "id": "49233362-a30e-4a88-8e4d-0998db255c10",
       "name": "Schedule: daily 06:45",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
@@ -23,7 +23,7 @@
       "notes": "Every client, every day after the 06:00 sync. Workflow settings > Timezone: FF's time zone."
     },
     {
-      "id": "734615c6-b0b9-404e-8532-ffdcd78d2e34",
+      "id": "082c3ded-f7da-41dc-8c7b-d21b1c516df4",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -43,7 +43,7 @@
       "notes": "\"Check website\" on the client page. Answers 202 at once; the check carries on."
     },
     {
-      "id": "f5e4a69a-b221-4559-9f56-f5bc034df1d0",
+      "id": "da797b56-583c-431a-a1e1-04c8bcf9bd19",
       "name": "Config",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -57,7 +57,7 @@
       "notes": "Set SUPABASE_URL and SUPABASE_ANON_KEY after import. Pick the FF GHL OAuth credential on the GHL nodes."
     },
     {
-      "id": "d50ea4e5-a2b5-4680-a9bb-43d45d360b70",
+      "id": "8e8f908f-0d27-4c6a-8979-d9860e5f7832",
       "name": "Manual run?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -74,7 +74,7 @@
           },
           "conditions": [
             {
-              "id": "0f142170-baca-4a7a-bc2d-d8001188d3a5",
+              "id": "b2d60a9a-9f5f-48d9-bbfb-21e30b168909",
               "leftValue": "={{ $('Config').first().json.trigger === 'manual' }}",
               "rightValue": true,
               "operator": {
@@ -90,7 +90,7 @@
       }
     },
     {
-      "id": "afa724be-35e1-4902-bac5-9871460cc8bc",
+      "id": "6f2dedaf-2ebd-4fd2-9454-4d5d79f607dc",
       "parameters": {
         "jsCode": "// Auth check block 1/4 - read the bearer token. Never log it.\nconst headers = $('Webhook').first().json.headers || {};\nconst raw = headers.authorization || headers.Authorization || '';\nconst match = /^Bearer\\s+(\\S+)$/i.exec(String(raw).trim());\nreturn [{ json: { token: match ? match[1] : '' } }];"
       },
@@ -104,7 +104,7 @@
       "notes": "Uses .first() on Webhook - singleton upstream node, so no paired-item ambiguity."
     },
     {
-      "id": "4b2fb8a2-5694-496a-b502-f82cd2059c4e",
+      "id": "c0633a02-e5aa-4b0b-be7e-cfdb1a2f8f07",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/auth/v1/user",
@@ -140,7 +140,7 @@
       "notes": "Auth check block 2/4. Supabase Auth validates the JWT (signature, expiry). neverError + fullResponse so a 401 is data for 'Auth: check role', not a crash."
     },
     {
-      "id": "404a78da-5754-40ad-add1-7e7064e6e114",
+      "id": "35e4cdae-967f-43ac-a6a8-90ba0cc03e62",
       "parameters": {
         "method": "GET",
         "url": "={{ $('Config').first().json.SUPABASE_URL }}/rest/v1/profiles",
@@ -185,7 +185,7 @@
       "notes": "Auth check block 3/4. Reads profiles with the service role. If the token was invalid it asks for the all-zero id, which matches nothing, and 'Auth: check role' has already got the 401 from the previous node."
     },
     {
-      "id": "b12256ea-3d26-437f-abde-04522f1026dd",
+      "id": "6265a92b-b160-41c8-93c0-3b08a917aa77",
       "parameters": {
         "jsCode": "// Auth check block 4/4 - decide. Output: { ok, status, error?, user? }\nconst cfg = $('Config').first().json;\nconst token = $('Auth: read token').first().json.token;\nconst userRes = $('Auth: verify token').first().json;\nconst profileRes = $('Auth: load profile').first().json;\n\nconst deny = (status, error) => [{ json: { ok: false, status, error } }];\n\nif (!token) return deny(401, 'Missing login token.');\nif (userRes.statusCode !== 200 || !userRes.body || !userRes.body.id) {\n  return deny(401, 'Login token is not valid or has expired.');\n}\nif (profileRes.statusCode !== 200) return deny(500, 'Could not load the login profile.');\n\nconst rows = Array.isArray(profileRes.body) ? profileRes.body : [];\nconst profile = rows[0];\nif (!profile || profile.user_id !== userRes.body.id) return deny(403, 'This login has no access.');\nif (profile.disabled) return deny(403, 'This login has been turned off.');\nif (!cfg.ALLOWED_ROLES.includes(profile.role)) {\n  return deny(403, 'Your role does not allow this action.');\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 200,\n    user: {\n      user_id: profile.user_id,\n      email: profile.email,\n      role: profile.role,\n      client_id: profile.client_id,\n    },\n  },\n}];"
       },
@@ -199,7 +199,7 @@
       "notes": "Every downstream node reads the caller from $('Auth: check role').first().json.user - never from the request body. client_viewer workflows must also check user.client_id against the requested resource."
     },
     {
-      "id": "8e633fdf-8f58-4fb7-a955-131a609d47dd",
+      "id": "b291dbb0-8148-414a-b4d5-5b044acd0c84",
       "parameters": {
         "conditions": {
           "options": {
@@ -232,7 +232,7 @@
       ]
     },
     {
-      "id": "c77d08e2-a67f-4571-be41-bcb864da834c",
+      "id": "61b6f2d8-cc08-4096-b161-8fc0446e48a2",
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
@@ -250,7 +250,7 @@
       "notes": "Same deny node in every webhook workflow. Returns 401/403/500 with a plain message; never echoes the token or profile."
     },
     {
-      "id": "0f2ce4c5-3d33-4aa5-bd29-4d21b0c7e80b",
+      "id": "ba82a3a9-42dd-45a5-af50-09e440020233",
       "name": "Respond: accepted",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -267,7 +267,7 @@
       }
     },
     {
-      "id": "35858d30-35af-419e-9e49-dc470909aefb",
+      "id": "59aa6acc-73ef-4d26-99d1-77860400f06c",
       "name": "Get pages to check",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -295,7 +295,7 @@
       "executeOnce": true
     },
     {
-      "id": "9be1c5d9-8262-467f-8bba-d4d9d9d48b1a",
+      "id": "1a4325b0-7b51-4680-942e-48e711a965c9",
       "name": "Pages",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -309,7 +309,7 @@
       "executeOnce": true
     },
     {
-      "id": "bdfcc55c-1b6e-4701-9853-f6c1f460c1fc",
+      "id": "79601504-00ec-40e9-8485-0283af67740f",
       "name": "Any pages?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -326,7 +326,7 @@
           },
           "conditions": [
             {
-              "id": "b7c1fb32-a3be-408e-be14-c754f9df106a",
+              "id": "8fe15354-739b-46ee-8e5c-62153f979d9f",
               "leftValue": "={{ !$json.none }}",
               "rightValue": true,
               "operator": {
@@ -342,7 +342,7 @@
       }
     },
     {
-      "id": "50c83249-6ebe-48b3-8be3-37d4e37359be",
+      "id": "a963a891-930c-47e4-b490-c04000dbab4b",
       "name": "Fetch page",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -387,7 +387,7 @@
       "notes": "Public page only, no login. One request at a time."
     },
     {
-      "id": "19254ec2-a935-4bb9-9ab2-a3fc77a443df",
+      "id": "a4bf3858-e632-409f-b24b-ef528b6d7831",
       "name": "Read pages",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -401,7 +401,7 @@
       "executeOnce": true
     },
     {
-      "id": "0888f7c8-fe7e-4862-903c-2bc8d1601822",
+      "id": "809e6674-3029-4079-b111-0d1ec550ac77",
       "name": "Save checks",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -443,7 +443,7 @@
       }
     },
     {
-      "id": "da10582a-b9d2-485a-b428-723249e31708",
+      "id": "14cf048c-745c-4eb7-958e-aabbc4fad3b5",
       "name": "Apply findings",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -478,7 +478,7 @@
       "notes": "Client type (online payment found = online cremation, unless set by hand), website and phone when empty."
     },
     {
-      "id": "d41f9be8-b682-4665-a5cb-d03b6407e8d1",
+      "id": "462ea35b-dac2-4f62-8e3e-863267ec6d56",
       "name": "Clients without GHL",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -506,7 +506,7 @@
       "executeOnce": true
     },
     {
-      "id": "5ae65518-774f-4f67-9b47-ea3dddd3a95a",
+      "id": "b7b906f3-e854-4c3e-96bb-8c4e657e2d66",
       "name": "Linked GHL sub-accounts",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -531,7 +531,7 @@
       "executeOnce": true
     },
     {
-      "id": "ee70c5b3-c45e-4b7b-83fa-a7df847bf2b1",
+      "id": "ca74f31d-d4e6-458e-b12a-49b3695066b2",
       "name": "GHL: agency",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -577,7 +577,7 @@
       "notes": "FF's GHL agency id, read from a client already linked (Config GHL_COMPANY_ID is the fallback)."
     },
     {
-      "id": "98ae0b42-d917-4ccf-95c2-3328e8b9f672",
+      "id": "867216c9-5def-4886-858f-f4f21510efdc",
       "name": "GHL: list sub-accounts",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -623,7 +623,7 @@
       "notes": "FF's GHL sub-accounts (name, website, phone) to link clients by themselves."
     },
     {
-      "id": "19426eaf-e0f8-4f1e-90f6-9c7b02f4261a",
+      "id": "1e7ab683-f8b0-4175-8732-5a2840bf7071",
       "name": "Match GHL",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -637,7 +637,7 @@
       "executeOnce": true
     },
     {
-      "id": "bc72a3db-ce75-4504-913c-56d92cdfdc83",
+      "id": "91daf038-3102-4ee4-8424-05e988db2672",
       "name": "Save GHL links",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
